@@ -1,277 +1,400 @@
+"""
+Grid-based electronic and electrostatic descriptor generation.
+
+This module provides utilities to:
+- Extract grid data (density/electrostatics/LUMO) from Gaussian cube files
+- Thermodynamically weight conformers using cclib thermochemistry
+- Aggregate/fold grid values onto a coarse 3D lattice
+- Batch-process multiple molecules listed in an Excel file
+"""
+
 from itertools import product
-import numpy as np
-import pandas as pd
-import glob
-import cclib
 from multiprocessing import Pool
 from pathlib import Path
+import glob
 
-def calc_grid__(log,T):
+import numpy as np
+import pandas as pd
+import cclib
+
+
+def calc_grid__(log: str, T: float):
+    """Extract grid data (density, ESP, LUMO) and a thermodynamic weight from a single log/cube set.
+
+    This function reads a Gaussian log file with thermochemical data (via cclib) and
+    the corresponding cube files (`Dt`, `ESP`, `LUMO`) and returns:
+
+    - A DataFrame with:
+        - x, y, z: grid point coordinates
+        - electronic: scalar field from the Dt cube (e.g., density-like quantity)
+        - electrostatic: ESP values from the ESP cube
+        - lumo: LUMO MO amplitude values from the LUMO cube
+    - A scalar "weight" derived from enthalpy and entropy at temperature T.
+
+    Parameters
+    ----------
+    log : str
+        Path to the Gaussian log file (optimization log). The corresponding cube files
+        are inferred by:
+        - Dt cube : log.replace("opt", "Dt").replace(".log", ".cube")
+        - ESP cube: log.replace("opt", "ESP").replace(".log", ".cube")
+        - LUMO cube: log.replace("opt", "LUMO").replace(".log", ".cube")
+    T : float
+        Temperature [K]. Used to compute a Gibbs-like weight from the cclib thermochemistry.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, float]
+        df : pandas.DataFrame
+            Columns:
+                - "x", "y", "z": Cartesian coordinates of grid points (float)
+                - "electronic": values from the Dt cube (float)
+                - "electrostatic": values from the ESP cube (float)
+                - "lumo": values from the LUMO cube (float)
+        weight : float
+            Gibbs-like quantity `G = enthalpy - T * entropy` extracted from the log file.
+
+    Notes
+    -----
+    - The cube header is assumed to follow the standard Gaussian format:
+      line 3: number of atoms and origin
+      lines 4–6: grid sizes and axis vectors.
     """
-    Extracts and processes grid data from molecular calculation output files.
-
-    This function reads molecular calculation log and cube files to extract grid-based electronic 
-    and electrostatic data. It computes a data frame containing the grid points, electronic contributions, 
-    and electrostatic potential values, and calculates a thermodynamic weight based on enthalpy and 
-    entropy at the given temperature.
-
-    Args:
-        log (str): Path to the log file containing molecular calculation results, readable by cclib.
-                   The log file is expected to contain enthalpy and entropy information.
-        T (float): Temperature in Kelvin, used to compute the thermodynamic weight.
-
-    Returns:
-        tuple:
-            - df (pandas.DataFrame): A data frame with the following columns:
-                - "x", "y", "z": Coordinates of grid points.
-                - "electronic": electronic contributions at each grid point from the `Dt` cube file.
-                - "electrostatic": Electrostatic potential at each grid point from the `ESP` cube file.
-            - weight (float): The computed thermodynamic weight as `enthalpy + entropy * T`.
-
-    Notes:
-        - The `Dt` and `ESP` cube files are inferred from the log file name by replacing `opt` with `Dt` 
-          and `ESP`, and removing the `.log` extension.
-        - The cube files are expected to contain grid data for electronic and electrostatic contributions.
-        - The `coord` array represents the coordinates of the grid points and is computed based on 
-          orientation, axis, and grid size information from the cube files.
-
-    Example:
-        df, weight = calc_grid__("molecule_opt.log", T=298.15)
-    """
+    # Parse thermochemistry from log
     data = cclib.io.ccread(log)
-    weight=data.enthalpy-data.entropy*T
-    #print(data.enthalpy,data.entropy*T,data.freeenergy,data.scfenergies[-1]*0.0367492929,data.zpve)
-    dt=log.replace('opt','Dt').replace('.log','.cube')
-    esp=log.replace('opt','ESP').replace('.log','.cube')
-    lumo=log.replace('opt','LUMO').replace('.log','.cube')
-    lumo1=log.replace('opt','LUMO+1_').replace('.log','.cube')
-    lumo2=log.replace('opt','LUMO+2_').replace('.log','.cube')
-    with open(dt, 'r', encoding='UTF-8') as f:
-        f.readline()
-        f.readline()
-        n_atom,x,y,z,_=f.readline().split()
-        n1,x1,y1,z1=f.readline().split()
-        n2,x2,y2,z2=f.readline().split()
-        n3,x3,y3,z3=f.readline().split()
-        n_atom=int(n_atom)
-        orient=np.array([x,y,z]).astype(float)
-        size=np.array([n1,n2,n3]).astype(int)
-        axis=np.array([[x1,y1,z1],[x2,y2,z2],[x3,y3,z3]]).astype(float)
-        coord = np.array(list(product(range(size[0]), range(size[1]), range(size[2])))) @ axis + orient
+    weight = data.enthalpy - data.entropy * T
 
+    # Infer cube file paths
+    dt_path = log.replace("opt", "Dt").replace(".log", ".cube")
+    esp_path = log.replace("opt", "ESP").replace(".log", ".cube")
+    lumo_path = log.replace("opt", "LUMO").replace(".log", ".cube")
+
+    # ----- Read Dt cube (reference for grid geometry) -----
+    with open(dt_path, "r", encoding="UTF-8") as f:
+        # Skip title/comment lines
+        f.readline()
+        f.readline()
+
+        # Number of atoms and origin
+        n_atom_str, x0_str, y0_str, z0_str, _ = f.readline().split()
+        n1_str, x1_str, y1_str, z1_str = f.readline().split()
+        n2_str, x2_str, y2_str, z2_str = f.readline().split()
+        n3_str, x3_str, y3_str, z3_str = f.readline().split()
+
+        n_atom = int(n_atom_str)
+        origin = np.array([x0_str, y0_str, z0_str], dtype=float)
+        size = np.array([n1_str, n2_str, n3_str], dtype=int)
+        axis = np.array(
+            [
+                [x1_str, y1_str, z1_str],
+                [x2_str, y2_str, z2_str],
+                [x3_str, y3_str, z3_str],
+            ],
+            dtype=float,
+        )
+
+        # Generate Cartesian coordinates for all grid points
+        # (i, j, k) indices multiplied by axis vectors, then shifted by origin
+        ijk = np.array(list(product(range(size[0]), range(size[1]), range(size[2]))))
+        coord = ijk @ axis + origin
+
+        # Skip atomic lines
         for _ in range(n_atom):
             f.readline()
-        dt=np.fromstring(f.read() ,dtype=float, sep=' ').reshape(-1,1)
-    with open(esp, 'r', encoding='UTF-8') as f:
-        for _ in range(6+n_atom):
-            f.readline()
-        esp=np.fromstring(f.read(), dtype=float, sep=' ').reshape(-1,1)
-    with open(lumo, 'r', encoding='UTF-8') as f:
-        for _ in range(6+n_atom+1):
-            f.readline()
-        lumo=np.fromstring(f.read(), dtype=float, sep=' ').reshape(-1,1)
-    with open(lumo1, 'r', encoding='UTF-8') as f:
-        for _ in range(6+n_atom+1):
-            f.readline()
-        lumo1=np.fromstring(f.read(), dtype=float, sep=' ').reshape(-1,1)
-    with open(lumo2, 'r', encoding='UTF-8') as f:
-        for _ in range(6+n_atom+1):
-            f.readline()
-        lumo2=np.fromstring(f.read(), dtype=float, sep=' ').reshape(-1,1)
-    df=pd.DataFrame(data=np.hstack((coord, dt,esp,lumo,lumo1,lumo2)), columns=["x", "y", "z", "electronic", "electrostatic","lumo","lumo1","lumo2"])
-    return df,weight
 
-def normal(x, u, v):
-    ret = 1 / np.sqrt(2 * np.pi * v) * np.exp(-(x-u)**2/(2*v))
-    return ret
+        # Read Dt values
+        dt_values = np.fromstring(f.read(), dtype=float, sep=" ").reshape(-1, 1)
 
-def calc_grid(path,T):
+    # ----- Read ESP cube -----
+    with open(esp_path, "r", encoding="UTF-8") as f:
+        # Skip header + atomic lines
+        for _ in range(6 + n_atom):
+            f.readline()
+        esp_values = np.fromstring(f.read(), dtype=float, sep=" ").reshape(-1, 1)
+
+    # ----- Read LUMO cube -----
+    # Note: one extra line after atoms (MO index line)
+    with open(lumo_path, "r", encoding="UTF-8") as f:
+        for _ in range(6 + n_atom + 1):
+            f.readline()
+        lumo_values = np.fromstring(f.read(), dtype=float, sep=" ").reshape(-1, 1)
+
+    # Build DataFrame
+    df = pd.DataFrame(
+        data=np.hstack((coord, dt_values, esp_values, lumo_values)),
+        columns=["x", "y", "z", "electronic", "electrostatic", "lumo"],
+    )
+
+    return df, weight
+
+
+def calc_grid(path: str, T: float, folded: int) -> pd.Series:
+    """Aggregate weighted grid values for all opt*.log files under a directory.
+
+    For each log/cube set in `path`, this function:
+    1. Extracts grid data and Gibbs-like weights via :func:`calc_grid__`.
+    2. Applies various filters and radial weighting to electronic/ESP/LUMO fields.
+    3. Coarse-grains the grid to integer coordinates (after scaling by 1/2).
+    4. Thermodynamically weights conformers using a Boltzmann-like factor.
+    5. Aggregates:
+        - Unfolded grid data (`*_unfold x y z`)
+        - Folded grid data (mirroring y to |y|; `*_fold x y z`)
+
+    Parameters
+    ----------
+    path : str
+        Directory containing Gaussian log files named like `opt*.log`. For each log,
+        corresponding cube files are assumed to exist in the same directory.
+    T : float
+        Temperature [K], used in the Boltzmann factors `exp(-ΔG / (3.1668114e-6 * T))`.
+    folded : int
+        Factor for the z-coordinate (e.g., 1 or -1) applied before folding.
+
+    Returns
+    -------
+    pandas.Series
+        A concatenated Series containing:
+        - Unfolded grid:
+            - indices of the form "electronic_unfold x y z"
+            - indices of the form "electrostatic_unfold x y z"
+            - indices of the form "lumo_unfold x y z"
+        - Folded grid:
+            - "electronic_fold x y z"
+            - "electrostatic_fold x y z"
+            - "lumo_fold x y z"
+
+        Values are the aggregated, thermodynamically weighted grid quantities.
+
+    Notes
+    -----
+    - Grid points are first restricted to within radius 8 (in Å) from origin.
+    - Fields are tapered to zero at radius 8.
+    - Coordinates are scaled by 1/2, then rounded to the nearest integer
+      (ceil for positive, floor for negative).
+    - Folding is applied by taking the absolute value of y (mirror in y) and
+      multiplying z by `folded`.
     """
-    Aggregates and processes grid data for electronic and electrostatic potentials from multiple log files.
+    grids = []
+    weights = []
 
-    This function processes molecular grid data from log files in a given directory, applying
-    electronic and electrostatic adjustments, folding, and weighting based on thermodynamic properties.
-    It generates electronic and electrostatic potential data on a grid, both for unfolded and folded configurations.
-
-    Args:
-        path (str): The directory path containing the log files with names matching the pattern `opt*.log`.
-        T (float): Temperature in Kelvin, used to calculate thermodynamic weights.
-
-    Returns:
-        pandas.Series: A combined series containing:
-            - electronic and electrostatic potentials for unfolded grids.
-            - electronic and electrostatic potentials for folded grids.
-            Each entry is indexed by a string indicating the type and grid position:
-                - `electronic_unfold x y z`
-                - `electrostatic_unfold x y z`
-                - `electronic_fold x y z`
-                - `electrostatic_fold x y z`
-
-    Workflow:
-        1. Parse all `opt*.log` files in the specified directory.
-        2. Extract electronic and electrostatic grid data using `calc_grid__`.
-        3. Filter and normalize electronic values, then compute weighted electrostatic potentials.
-        4. Align grids to integer positions and group data by grid points.
-        5. Process folded grids (mirroring negative z-coordinates).
-        6. Apply thermodynamic weights to the grid data based on enthalpy and entropy.
-        7. Aggregate electronic and electrostatic data into unfolded and folded forms.
-        8. Return the combined series with labeled grid data.
-
-    Notes:
-        - The function skips files that fail to parse and logs the failure with an exception message.
-        - Grid values are weighted using the formula: 
-          `weights = exp(-Δweight / (3.1668114e-6 * T)) / sum(weights)` 
-          where Δweight is relative to the minimum weight.
-
-    Example:
-        result = calc_grid("/path/to/logs", T=298.15)
-    """
-    grids=[]
-    weights=[]
-    for log in glob.glob(f'{path}/opt*.log'):
+    # Loop over optimization logs
+    for log in glob.glob(f"{path}/opt*.log"):
         try:
-            df,weight=calc_grid__(log,T)
-            print(f'PARCING SUCCESS {log}')
-
-        except Exception as e:
-            print(f'PARCING FAILURE {log}')
+            df, weight = calc_grid__(log, T)
+            print(f"PARSING SUCCESS {log}")
+        except Exception as e:  # noqa: BLE001
+            print(f"PARSING FAILURE {log}")
             print(e)
             continue
-        splog=log.replace("/opt","/sp")
-        print(splog)
-        data=cclib.io.ccread(splog)
-        energies=data.moenergies[0]
-        homo=data.homos[0]
-        # print(log,energies[homo+1])
-        # print(homo)
 
-        df=df[(df["x"]<=4)&(df["x"]>=-8)]
-        df=df[(df["y"]<=8)&(df["y"]>=-8)]
-        df=df[(df["z"]<=6)&(df["z"]>=-4)]
-        df["electrostatic"]=df["electrostatic"]*normal(np.log(df["electronic"]),np.log(0.001),1)#1-np.exp(-df["electrostatic"]/abs(df["electrostatic"].min()))##np.where((df["electronic"]>0.001)&(df["electronic"]<0.002),1,np.nan)#
-        df["electronic"]**=0.5
-        # df["electronic"]=np.where(df["electronic"] < 1e0, df["electronic"], 1e0)
-        # df["electronic"]=normal(np.log(df["electronic"]),np.log(0.001),1)
-        #df["binary"] = np.where(df["electronic"] < 1e-3, 0, 1)
-        #df["electronic"]=np.where(df["electronic"]>1,1,df["electronic"])
-        df["lumo"]=df["lumo"]**2#+df["lumo1"]**2/2#*np.exp(-energies[homo+1]/np.linalg.norm(energies[homo+1:homo+4]))+df["lumo1"]**2*np.exp(-energies[homo+2]/np.linalg.norm(energies[homo+1:homo+4]))+df["lumo2"]**2*np.exp(-energies[homo+3]/np.linalg.norm(energies[homo+1:homo+4]))#*normal(np.log(df["electronic"]),np.log(0.001),1)#.where(df["electronic"]<1e-3,0)**2
-        # df["lumo"]=-df["lumo"]
-        # df["electronic"],df["lumo"]=df["lumo"],df["electronic"]
-        # df["lumo"]=df["dual"]#*normal(np.log(df["electronic"]),np.log(0.001),1)
-        df[["x","y","z"]]/=2
-        df[["x", "y", "z"]] = np.where(df[["x", "y", "z"]] > 0,np.ceil(df[["x", "y", "z"]]),np.floor(df[["x", "y", "z"]])).astype(int)
-        df=df.groupby(['x', 'y', 'z'], as_index=False)[["electronic", "electrostatic","lumo"]].sum()#,"lumo"
-        
-        # w = np.exp(-df["electronic"] / df["electronic"].std())
-        # w/= w.sum()
-        # df["electronic"]*=w
-        # w = np.exp(-abs(df["electrostatic"]) / df["electrostatic"].std())
-        # w/= w.sum()
-        # df["electrostatic"]*=w
+        # Restrict to points within radius 8
+        r2 = df["x"] ** 2 + df["y"] ** 2 + df["z"] ** 2
+        df = df[r2 < 8**2].copy()
 
-        df["gibbs"]=weight
-        print(weight)
+        # Clamp / transform electronic & electrostatic fields
+        df["electrostatic"] = df["electrostatic"] * np.where(
+            df["electronic"] < 1e-2, 1e-2 - df["electronic"], 0.0
+        )
+        df["electronic"] = np.where(
+            df["electronic"] < 1e-2, df["electronic"], 1e-2
+        )
+
+        # LUMO: square amplitude
+        df["lumo"] = df["lumo"] ** 2
+
+        # Radial taper to zero at r = 8
+        r = np.linalg.norm(df[["x", "y", "z"]], axis=1).reshape(-1, 1)
+        taper = np.where(r < 8.0, 1.0 - r / 8.0, 0.0)
+        df[["electronic", "electrostatic", "lumo"]] *= taper
+
+        # Coarse grid: scale and round
+        df[["x", "y", "z"]] /= 2.0
+        df[["x", "y", "z"]] = np.where(
+            df[["x", "y", "z"]] > 0,
+            np.ceil(df[["x", "y", "z"]]),
+            np.floor(df[["x", "y", "z"]]),
+        ).astype(int)
+
+        # Group by coarse grid and sum fields
+        df = (
+            df.groupby(["x", "y", "z"], as_index=False)[
+                ["electronic", "electrostatic", "lumo"]
+            ]
+            .sum()
+        )
+
+        # Attach Gibbs-like weight per conformer
+        df["gibbs"] = weight
         grids.append(df.copy())
         weights.append(weight)
 
-    def total_keepnoindex(d):
-        weights=d.gibbs.values
-        weights=np.array(weights)-np.min(weights)
-        sweights=d.electronic.values
-        if np.sqrt(np.average(sweights**2))==0:
-            sweights=1
-        else:
-            sweights=np.exp(-weights/3.1668114e-6/T)#-sweights/np.sqrt(np.average(sweights**2))
-            sweights/=np.sum(sweights)
-        eweights=d.electrostatic.values
-        if np.sqrt(np.average(eweights**2))==0:
-            eweights=1
-        else:
-            eweights=np.exp(-weights/3.1668114e-6/T)#-np.abs(eweights)/np.sqrt(np.average(eweights**2))
-            eweights/=np.sum(eweights)
-        weights=np.exp(-weights/3.1668114e-6/T)
-        weights/=np.sum(weights)
-        # print(weights)
-        return pd.DataFrame({
-            "x":d.x.mean(),
-            "y":d.y.mean(),
-            "z":d.z.mean(),
-            'electronic': (d.electronic*weights).sum(),
-            'electrostatic': (d.electrostatic*weights).sum(),
-            'lumo': (d.lumo*weights).sum(),
-            # 'lumo': (d.lumo*weights).sum()
-            },index=['hoge'])
-    grids=pd.concat(grids)
-    wgrids=grids.groupby(['x', 'y', 'z'], as_index=False).apply(total_keepnoindex).astype({'x': int,'y': int,'z': int}) 
-    electronic=pd.Series({f'electronic_unfold {int(row.x)} {int(row.y)} {int(row.z)}': row.electronic for idx, row in wgrids.iterrows()})
-    electrostatic=pd.Series({f'electrostatic_unfold {int(row.x)} {int(row.y)} {int(row.z)}': row.electrostatic for idx, row in wgrids.iterrows()})
-    lumo=pd.Series({f'lumo_unfold {int(row.x)} {int(row.y)} {int(row.z)}': row.lumo for idx, row in wgrids.iterrows()})
-    # wgrids.loc[wgrids['z'] < 0, ['electronic','electrostatic',"lumo"]] *= -1#,"lumo"
-    wgrids[["y"]]=wgrids[["y"]].abs()
-    wgrids=wgrids.groupby(['x', 'y', 'z'], as_index=False)[["electronic", "electrostatic","lumo"]].sum()#,"lumo"
+    if not grids:
+        # No valid grids found; return empty Series
+        return pd.Series(dtype=float)
 
-    fold_electronic=pd.Series({f'electronic_fold {int(row.x)} {int(row.y)} {int(row.z)}': row.electronic for idx, row in wgrids.iterrows()})
-    fold_electrostatic=pd.Series({f'electrostatic_fold {int(row.x)} {int(row.y)} {int(row.z)}': row.electrostatic for idx, row in wgrids.iterrows()})
-    fold_lumo=pd.Series({f'lumo_fold {int(row.x)} {int(row.y)} {int(row.z)}': row.lumo for idx, row in wgrids.iterrows()})
-    return pd.concat([electronic,electrostatic,lumo,fold_electronic,fold_electrostatic,fold_lumo])#lumo,,fold_lumo
+    def _total_keepnoindex(d: pd.DataFrame) -> pd.DataFrame:
+        """Thermodynamically weight all rows in group `d` (same x,y,z)."""
+        weights_arr = d.gibbs.values
+        # Shift to minimum
+        delta = weights_arr - np.min(weights_arr)
 
-def process_row(row):
-    home = Path.home()
-    target_dir = home / "competitive_ketones"/ row["InChIKey"]
-    return calc_grid(target_dir, row["temperature"])
+        # Basic Boltzmann factor on Gibbs-like weight
+        boltz = np.exp(-delta / (3.1668114e-6 * T))
+        boltz /= np.sum(boltz)
 
-def calc_lumo_energy(inchikey):
-    home = Path.home()
-    weights=[]
-    for log in glob.glob(home / "competitive_ketones"/ inchikey /"opt*.log"):
-        data = cclib.io.ccread(log)
-        weight=data.enthalpy-data.entropy*T
-    log = target_dir / "sp.log"
-    data = cclib.io.ccread(log)
-    energies=data.moenergies[0]
-    homo=data.homos[0]
-    return energies[homo+1]
+        return pd.DataFrame(
+            {
+                "x": d.x.mean(),
+                "y": d.y.mean(),
+                "z": d.z.mean(),
+                "electronic": (d.electronic * boltz).sum(),
+                "electrostatic": (d.electrostatic * boltz).sum(),
+                "lumo": (d.lumo * boltz).sum(),
+            },
+            index=["_"],
+        )
 
-def calc_grid_(path):
+    # Concatenate all conformer grids and apply weighting on each coarse grid point
+    grids_all = pd.concat(grids, ignore_index=True)
+    wgrids = (
+        grids_all.groupby(["x", "y", "z"], as_index=False)
+        .apply(_total_keepnoindex)
+        .reset_index(drop=True)
+        .astype({"x": int, "y": int, "z": int})
+    )
+
+    # Apply z-fold factor
+    wgrids[["z"]] = wgrids[["z"]] * folded
+
+    # Unfolded series
+    electronic_unfold = pd.Series(
+        {
+            f"electronic_unfold {int(row.x)} {int(row.y)} {int(row.z)}": row.electronic
+            for _, row in wgrids.iterrows()
+        }
+    )
+    electrostatic_unfold = pd.Series(
+        {
+            f"electrostatic_unfold {int(row.x)} {int(row.y)} {int(row.z)}": row.electrostatic
+            for _, row in wgrids.iterrows()
+        }
+    )
+    lumo_unfold = pd.Series(
+        {
+            f"lumo_unfold {int(row.x)} {int(row.y)} {int(row.z)}": row.lumo
+            for _, row in wgrids.iterrows()
+        }
+    )
+
+    # Fold in y (mirror) and re-aggregate
+    wgrids_fold = wgrids.copy()
+    wgrids_fold[["y"]] = wgrids_fold[["y"]].abs()
+    wgrids_fold = (
+        wgrids_fold.groupby(["x", "y", "z"], as_index=False)[
+            ["electronic", "electrostatic", "lumo"]
+        ]
+        .sum()
+    )
+
+    electronic_fold = pd.Series(
+        {
+            f"electronic_fold {int(row.x)} {int(row.y)} {int(row.z)}": row.electronic
+            for _, row in wgrids_fold.iterrows()
+        }
+    )
+    electrostatic_fold = pd.Series(
+        {
+            f"electrostatic_fold {int(row.x)} {int(row.y)} {int(row.z)}": row.electrostatic
+            for _, row in wgrids_fold.iterrows()
+        }
+    )
+    lumo_fold = pd.Series(
+        {
+            f"lumo_fold {int(row.x)} {int(row.y)} {int(row.z)}": row.lumo
+            for _, row in wgrids_fold.iterrows()
+        }
+    )
+
+    return pd.concat(
+        [
+            electronic_unfold,
+            electrostatic_unfold,
+            lumo_unfold,
+            electronic_fold,
+            electrostatic_fold,
+            lumo_fold,
+        ]
+    )
+
+
+def process_row(row: pd.Series) -> pd.Series:
+    """Wrapper for multiprocessing: compute grid features for a single dataframe row.
+
+    Parameters
+    ----------
+    row : pandas.Series
+        A row from the input Excel DataFrame. It must contain:
+        - "InChIKey": used to locate the molecule directory under ~/molecules/<InChIKey>
+        - "temperature": temperature [K] for this molecule.
+
+    Returns
+    -------
+    pandas.Series
+        The Series returned by :func:`calc_grid`, i.e. aggregated grid descriptors for
+        this molecule. The index is a set of feature names; the single row corresponds
+        to one molecule.
     """
-    Processes molecular grid data for a set of molecules and saves the results.
+    home = Path.home()
+    target_dir = home / "molecules" / row["InChIKey"]
+    return calc_grid(str(target_dir), row["temperature"], folded=1)
 
-    This function reads an Excel file containing molecular information, processes electronic and electrostatic 
-    grid data for each molecule using its InChIKey and temperature, and saves the resulting data to a 
-    pickle file. Grid calculations are performed using the `calc_grid` function.
 
-    Args:
-        path (str): Path to the Excel file (.xlsx) containing molecular data.
-                    The file must have the following columns:
-                    - "InChIKey": A unique identifier for each molecule, used to locate calculation folders.
-                    - "temperature": The temperature in Kelvin for each molecule.
+def calc_grid_(path: str) -> None:
+    """Batch-process grid features for all molecules listed in an Excel file.
 
-    Returns:
-        None: The function saves the resulting data as a pickle file (.pkl) in the same directory as the 
-              input Excel file, with the same name.
+    This function:
+    1. Reads molecular data from an Excel file.
+    2. For each row (molecule), locates the corresponding directory under
+       `~/molecules/<InChIKey>` and computes grid descriptors via :func:`calc_grid`.
+    3. Combines the grid descriptors with the original DataFrame.
+    4. Saves the result as:
+        - A pickle file with the same basename (``.pkl``)
+        - A CSV file with the suffix ``feat.csv``
 
-    Workflow:
-        1. Load molecular data from the specified Excel file.
-        2. For each molecule, compute grid data using `calc_grid` with the specified path and temperature.
-        3. Combine the computed grid data with the original data.
-        4. Save the resulting data as a pickle file.
+    Parameters
+    ----------
+    path : str
+        Path to the Excel (.xlsx) file containing molecular data.
+        Required columns:
+            - "InChIKey"
+            - "temperature"
 
-    Example:
-        calc_grid_("/path/to/molecular_data.xlsx")
+    Returns
+    -------
+    None
+        Results are written to disk as pickle and CSV files.
+
+    Example
+    -------
+    >>> calc_grid_("data/data.xlsx")
     """
-    print(f'START PARCING {path}')
-    df=pd.read_excel(path)#.iloc[:75]
-    #df["LUMO_energy"]=df["InChIKey"].apply(lambda x: calc_lumo_energy(x))
-    #plot
+    print(f"START PARSING {path}")
+    df = pd.read_excel(path)
+
+    # Multiprocessing over rows
     with Pool(24) as pool:
         results = pool.map(process_row, [row for _, row in df.iterrows()])
-    #sum
-    data = pd.DataFrame(results)
-    df = pd.concat([df, data], axis=1).fillna(0)
-    path_ = path.replace(".xlsx", ".pkl")
-    df.to_pickle(path_)
-    df.to_csv(path.replace(".xlsx","feat.csv"))
+
+    features = pd.DataFrame(results)
+    df_out = pd.concat([df, features], axis=1).fillna(0)
+
+    # Save as pickle and CSV
+    pkl_path = path.replace(".xlsx", ".pkl")
+    csv_path = path.replace(".xlsx", "feat.csv")
+
+    df_out.to_pickle(pkl_path)
+    df_out.to_csv(csv_path, index=False)
 
 
-if __name__ == '__main__':
-    calc_grid_("data/cleaned.xlsx")
+if __name__ == "__main__":
+    calc_grid_("data/data.xlsx")

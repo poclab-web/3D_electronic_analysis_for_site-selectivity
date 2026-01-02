@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 from rdkit import Chem
 from rdkit.Chem import PandasTools
-from rdkit.Chem.Descriptors import ExactMolWt
 
 
 def common(from_file_path: str) -> pd.DataFrame:
@@ -35,8 +34,8 @@ def common(from_file_path: str) -> pd.DataFrame:
         - rows with invalid 'SMILES' or missing 'mol' removed
         - 'InChIKey' : InChIKey of the hydrogen-saturated molecule
     """
-    # Load and trim to the first 123 entries
-    df = pd.read_excel(from_file_path, skiprows=1).iloc[:123]
+    # Load
+    df = pd.read_excel(from_file_path, skiprows=1)#.iloc[:150]
 
     # Generate RDKit Mol objects from SMILES
     df["mol"] = df["SMILES"].apply(Chem.MolFromSmiles)
@@ -69,18 +68,19 @@ def output(df: pd.DataFrame, to_file_path: str) -> None:
         The function writes an Excel file to `to_file_path`.
     """
     # Ensure unique molecules by InChIKey
-    df_unique = df.drop_duplicates(subset="InChIKey").copy()
-
-    # Add RDKit molecule column (ROMol) from SMILES
-    PandasTools.AddMoleculeColumnToFrame(df_unique, "SMILES")
-
+    print(df[df.duplicated(subset="InChIKey")])
+    df = df.drop_duplicates(subset="InChIKey").copy()
+    print(len(df))
     # Select and sanitize columns for export
-    df_export = df_unique[
-        ["entry", "SMILES", "ROMol", "InChIKey", "temperature", "ΔΔG.expt.", "test"]
+    df = df[
+        ["entry","name", "SMILES", "InChIKey", "temperature", "ΔΔG.expt.", "test"]
     ].replace([np.nan, None, np.inf, -np.inf], "N/A")
 
+    # Add RDKit molecule column (ROMol) from SMILES
+    PandasTools.AddMoleculeColumnToFrame(df, "SMILES")
+
     # Save as Excel with molecule images
-    PandasTools.SaveXlsxFromFrame(df_export, to_file_path, size=(100, 100))
+    PandasTools.SaveXlsxFromFrame(df, to_file_path, size=(100, 100))
 
 
 def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
@@ -367,13 +367,12 @@ def main() -> None:
     2. Export a cleaned Excel file with unique molecules.
     3. Generate the ΔΔG vs k2/k1 analogue plot.
     4. Generate Hammett and carbonyl-angle correlation plots.
-    5. Compute exact molecular weights and export a molecule list.
     """
     # 1. Load data
-    df = common("data/competitivereactiondata.xlsx")
+    df = common("data/all_experimental_data.xlsx")
 
     # 2. Cleaned unique-molecule table
-    output(df, "data/cleaned.xlsx")
+    output(df, "data/data.xlsx")
 
     # 3. ΔΔG vs k2/k1 overview plot
     plot_ddg_vs_k2k1(df, "data/deltaG_k2k1.png")
@@ -393,14 +392,6 @@ def main() -> None:
         df.loc[mask_angle, "ΔΔG.expt."].values,
         "data/carbonyl angle.png",
     )
-
-    # 5. Molecular weight table with RDKit images
-    df["molwt"] = df["SMILES"].apply(
-        lambda smiles: ExactMolWt(Chem.MolFromSmiles(smiles))
-    )
-    PandasTools.AddMoleculeColumnToFrame(df, "SMILES")
-    df_export = df.replace([np.nan, None, np.inf, -np.inf], "N/A")
-    PandasTools.SaveXlsxFromFrame(df_export, "data/mol_list.xlsx", size=(100, 100))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ from itertools import product
 import numpy as np
 import pandas as pd
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.linear_model import Ridge,Lasso,ElasticNet
+from sklearn.linear_model import Ridge,Lasso,ElasticNet,LassoLars,OrthogonalMatchingPursuit,LassoLarsIC
 from sklearn.model_selection import KFold
 from multiprocessing import Pool
 from itertools import combinations
@@ -54,13 +54,13 @@ def regression(X_train,X_test,y_train,y,method):
         predict=model.predict(X_test)
     elif "Lasso" in method:
         alpha=float(method.split()[1])
-        model=Lasso(alpha=alpha, fit_intercept=True,max_iter=10000)
+        model=LassoLars(alpha=alpha, fit_intercept=True,max_iter=10000)
         model.fit(X_train, y_train)
         coef=model.coef_
         predict=model.predict(X_test)
     elif "ElasticNet" in method:
         alpha,l1ratio=map(float, method.split()[1:3])
-        model=ElasticNet(alpha=alpha,l1_ratio=l1ratio, fit_intercept=True,max_iter=10000,warm_start=True,positive=True)
+        model=ElasticNet(alpha=alpha,l1_ratio=l1ratio, fit_intercept=True,max_iter=10000)
         model.fit(X_train, y_train)
         coef=model.coef_
         predict=model.predict(X_test)
@@ -70,7 +70,19 @@ def regression(X_train,X_test,y_train,y,method):
         model.fit(X_train, y_train)
         coef=model.coef_[0]
         predict=model.predict(X_test)#[0]
-    # predict=np.clip(predict, np.min(y), np.max(y))
+    elif "LassoLars" in method:
+        alpha=float(method.split()[1])
+        model=LassoLars(alpha=alpha, fit_intercept=True,max_iter=10000)
+        model.fit(X_train, y_train)
+        coef=model.coef_
+        predict=model.predict(X_test)
+    elif "OMP" in method:
+        n_components=int(method.split()[1])
+        model=OrthogonalMatchingPursuit(n_nonzero_coefs=int(n_components), fit_intercept=True)
+        model.fit(X_train, y_train)
+        coef=model.coef_
+        predict=model.predict(X_test)
+    #predict=np.clip(predict, np.min(y), np.max(y))
     return coef,predict
 
 def regression_parallel(input):
@@ -83,8 +95,11 @@ def regression_parallel(input):
     print("len",np.count_nonzero(coef))
     for train_index, test_index in kf.split(y_train):
         #print(X_train.shape)
-        _,cv=regression(X_train[train_index][:,coef!=0],X_train[test_index][:,coef!=0],y_train[train_index],y,method)
-        #_,cv=regression(X_train[train_index],X_train[test_index],y_train[train_index],y,method)
+        if np.count_nonzero(coef)==0:
+            cv=[0]*len(test_index)
+        else:
+            _,cv=regression(X_train[train_index][:,coef!=0],X_train[test_index][:,coef!=0],y_train[train_index],y,method)
+            #_,cv=regression(X_train[train_index],X_train[test_index],y_train[train_index],y,method)
         cvs.extend(cv)
         sort_index.extend(test_index)
     
@@ -184,30 +199,43 @@ def regression_(path,names):
     print(path)
     df=pd.read_pickle(path)
     df_train=df[df["test"]==0]
+    y_train,y=df_train["ΔΔG.expt."].values,df["ΔΔG.expt."].values
     trains=[]
     train_tests=[]
     stds=[]
     for name in names:
         train = df_train.filter(like=f'{name}_fold').to_numpy()
-        std=np.average(np.std(train,axis=0))
+        # average=np.average(train)
+        std=np.std(train)
+        #std=np.linalg.norm(train)#/np.size(train)
+        #print(std_,std)
         train_test = df.filter(like=f'{name}_fold').to_numpy()
+        # train-=average
+        # train_test-=average
+
         train/=std
         train_test/=std
         train_tests.append(train_test)
         trains.append(train)
         stds.append(std)
-
-    y_train,y=df_train["ΔΔG.expt."].values,df["ΔΔG.expt."].values
+    # raise Exception("stop")
+    # y_ave=np.average(y_train)
+    # y_train-=y_ave
+    # y-=y_ave
+    # print("y",y_ave)
     methods=[]
-    for alpha in np.logspace(-15,-5,10,base=2):
+    for alpha in np.logspace(-14,0,15,base=2):
         methods.append(f'Lasso {alpha}')
-    for alpha in np.logspace(-15,-5,10,base=2):
+    for alpha in np.logspace(-9,5,15,base=2):
         methods.append(f'Ridge {alpha}')
-    for alpha,l1ratio in product(np.logspace(-15,-5,10,base=2),[0.5]):#np.round(np.linspace(0.1, 0.9, 9),decimals=10)
+    for alpha,l1ratio in product(np.logspace(-14,0,15,base=2),[0.5]):#np.round(np.linspace(0.1, 0.9, 9),decimals=10)
         methods.append(f'ElasticNet {alpha} {l1ratio}')
-    for n_components in range(1,5):
+    for n_components in range(1,15):
         methods.append(f'PLS {n_components}')
-
+    for alpha in np.logspace(-14,0,15,base=2):
+        methods.append(f'LassoLars {alpha}')
+    for n_components in range(1,15):
+        methods.append(f'OMP {n_components}')
     grid=pd.DataFrame(index=[col.replace("electronic_fold ","") for col in df.filter(like='electronic_fold ').columns])
 
     with Pool(24) as pool:
@@ -234,7 +262,8 @@ def generate_combinations(elements):
     return result
 
 if __name__ == '__main__':
-    for feat,path in product(generate_combinations(["electronic","electrostatic","lumo"]),[
-        "data/cleaned.pkl",
-                 ]):
-        regression_(path,feat)
+    regression_("data/data.pkl",["electronic","electrostatic","lumo"])
+    # for feat,path in product(generate_combinations(["electronic","electrostatic","lumo"]),[
+    #     "data/data.pkl",
+    #              ]):
+    #     regression_(path,feat)
