@@ -117,7 +117,7 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
         "polycyclic": (0 / 255, 0 / 255, 0 / 255),
     }
 
-    fig, ax_top = plt.subplots(figsize=(8, 4), facecolor="none")
+    fig, ax_top = plt.subplots(figsize=(6, 3), facecolor="none")
     fig.patch.set_alpha(0.0)
     ax_top.set_facecolor("none")
 
@@ -127,6 +127,8 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
         for i, analogue in enumerate(analogue_classes)
     }
 
+    used_y = []  # 実際に使った y 座標を記録
+
     for analogue in analogue_classes:
         subset = df[df["analogue"] == analogue]
         if subset.empty:
@@ -134,6 +136,8 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
             continue
 
         y = y_positions[analogue]
+        used_y.append(y)
+
         x_vals = subset["ΔΔG.expt."]
 
         # Horizontal line indicating the range of ΔΔG‡ for this class
@@ -141,7 +145,7 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
             y=y,
             xmin=x_vals.min(),
             xmax=x_vals.max(),
-            color="black",
+            color="gray",
             linewidth=2,
         )
 
@@ -151,8 +155,15 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
             [y] * len(x_vals),
             "o",
             color=colors[analogue],
+            alpha=0.7,
             label=analogue,
         )
+
+    # y 範囲に上側の余白を追加
+    if used_y:
+        y_min = min(used_y)
+        y_max = max(used_y)
+        ax_top.set_ylim(y_min - 0.2, y_max + 1)
 
     # Hide frame and y-axis labels
     for spine in ax_top.spines.values():
@@ -163,7 +174,7 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
     ax_top.xaxis.set_ticks_position("top")
     ax_top.xaxis.set_label_position("top")
     ax_top.set_xlabel(r"$\Delta\Delta G^\ddagger_{\rm expt.}$ [kcal/mol]", loc="right")
-    ax_top.xaxis.set_label_coords(1.0, 1.15)
+    ax_top.xaxis.labelpad = 10
 
     # Top arrow (→)
     ax_top.annotate(
@@ -199,6 +210,7 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
     ax_top.set_title("")
     fig.tight_layout()
     fig.savefig(to_file_path, dpi=500, transparent=False)
+
 
 
 def list(df: pd.DataFrame, to_file_path: str) -> None:
@@ -252,7 +264,8 @@ def Hammettplot(x, y, save_path: str) -> None:
     intercept_str = f"+ {intercept:.1f}" if intercept >= 0 else f"- {abs(intercept):.1f}"
 
     # Plot
-    fig, ax = plt.subplots(figsize=(4, 3), facecolor="none")
+    fig, ax = plt.subplots(figsize=(3, 3), facecolor="none")
+    
     ax.plot(x_fit, y_fit, color="midnightblue", linewidth=1.5)
     ax.scatter(
         x,
@@ -281,14 +294,15 @@ def Hammettplot(x, y, save_path: str) -> None:
         0.95,
         text_eq,
         transform=ax.transAxes,
-        fontsize=9,
+        fontsize=8,
         verticalalignment="top",
         horizontalalignment="right",
         color="midnightblue",
     )
-
+    ax.set_box_aspect(1)
+    #ax.set_aspect("equal", adjustable="box")
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path,dpi=500)
 
 
 def angleplot(x, y, save_path: str) -> None:
@@ -319,7 +333,7 @@ def angleplot(x, y, save_path: str) -> None:
     intercept_str = f"+ {intercept:.1f}" if intercept >= 0 else f"- {abs(intercept):.1f}"
 
     # Plot
-    fig, ax = plt.subplots(figsize=(4, 3), facecolor="none")
+    fig, ax = plt.subplots(figsize=(3, 3), facecolor="none")
     ax.plot(x_fit, y_fit, color="saddlebrown", linewidth=1.5)
     ax.scatter(
         x,
@@ -339,7 +353,7 @@ def angleplot(x, y, save_path: str) -> None:
 
     # Regression equation and R^2
     text_eq = (
-        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope:.2f}$\theta$ {intercept_str}"
+        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope:.3f}$\theta$ {intercept_str}"
         + "\n"
         + rf"$R^2$ = {r_value**2:.2f}"
     )
@@ -348,14 +362,14 @@ def angleplot(x, y, save_path: str) -> None:
         0.95,
         text_eq,
         transform=ax.transAxes,
-        fontsize=9,
+        fontsize=8,
         verticalalignment="top",
         horizontalalignment="left",
         color="saddlebrown",
     )
-
+    ax.set_box_aspect(1)
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path,dpi=500)
 
 
 def main() -> None:
