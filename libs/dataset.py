@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 from rdkit import Chem
 from rdkit.Chem import PandasTools
+from pathlib import Path
 
 
 def common(from_file_path: str) -> pd.DataFrame:
@@ -209,31 +210,13 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
 
     ax_top.set_title("")
     fig.tight_layout()
-    fig.savefig(to_file_path, dpi=500, transparent=False)
 
+    # --- create folder if needed ---
+    out_path = Path(to_file_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-
-def list(df: pd.DataFrame, to_file_path: str) -> None:
-    """Backward-compatible wrapper for `plot_ddg_vs_k2k1`.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Same as `plot_ddg_vs_k2k1`.
-    to_file_path : str
-        Same as `plot_ddg_vs_k2k1`.
-
-    Returns
-    -------
-    None
-
-    Notes
-    -----
-    This function is kept for compatibility with existing code that calls
-    `list(df, to_file_path)`. New code should call `plot_ddg_vs_k2k1`
-    instead.
-    """
-    plot_ddg_vs_k2k1(df, to_file_path)
+    fig.savefig(out_path, dpi=500, transparent=False)
+    plt.close(fig)
 
 
 def Hammettplot(x, y, save_path: str) -> None:
@@ -253,6 +236,10 @@ def Hammettplot(x, y, save_path: str) -> None:
     None
         The function saves the plot to `save_path`.
     """
+    # Ensure the output folder exists (e.g., "folder/file.png")
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
     # Linear regression
     slope, intercept, r_value, p_value, std_err = linregress(x, y)
 
@@ -302,7 +289,8 @@ def Hammettplot(x, y, save_path: str) -> None:
     ax.set_box_aspect(1)
     #ax.set_aspect("equal", adjustable="box")
     plt.tight_layout()
-    plt.savefig(save_path,dpi=500)
+    plt.savefig(out_path, dpi=500)
+    plt.close(fig)
 
 
 def angleplot(x, y, save_path: str) -> None:
@@ -322,6 +310,10 @@ def angleplot(x, y, save_path: str) -> None:
     None
         The function saves the plot to `save_path`.
     """
+    # Ensure output folder exists (e.g., "folder/file.png")
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
     # Linear regression
     slope, intercept, r_value, p_value, std_err = linregress(x, y)
 
@@ -369,7 +361,8 @@ def angleplot(x, y, save_path: str) -> None:
     )
     ax.set_box_aspect(1)
     plt.tight_layout()
-    plt.savefig(save_path,dpi=500)
+    plt.savefig(out_path, dpi=500)
+    plt.close(fig)
 
 
 def main() -> None:
@@ -389,14 +382,14 @@ def main() -> None:
     output(df, "data/data.xlsx")
 
     # 3. ΔΔG vs k2/k1 overview plot
-    plot_ddg_vs_k2k1(df, "data/deltaG_k2k1.png")
+    plot_ddg_vs_k2k1(df, "data/eda/deltaG_k2k1.png")
 
     # 4. Hammett plot (rows with non-missing Hammett σ)
     mask_hammett = df["Hammett σ"].notna()
     Hammettplot(
         df.loc[mask_hammett, "Hammett σ"].values,
         df.loc[mask_hammett, "ΔΔG.expt."].values,
-        "data/hammett.png",
+        "data/eda/hammett.png",
     )
 
     # 4'. Carbonyl-angle plot (rows with non-missing angle)
@@ -404,7 +397,7 @@ def main() -> None:
     angleplot(
         df.loc[mask_angle, "carbonyl angle"].values,
         df.loc[mask_angle, "ΔΔG.expt."].values,
-        "data/carbonyl angle.png",
+        "data/eda/carbonyl angle.png",
     )
 
 

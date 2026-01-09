@@ -96,12 +96,21 @@ def best_parameter(path):
     return df#[["ΔΔG.expt.","regression","prediction","cv"]]
 
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+
+from pathlib import Path  # ★ 追加
+
 def plot_3d_contributions(
     df: pd.DataFrame,
     save_path: str,
-    highlight_colors=None,  # <- {InChIKey: "Label"} を渡す
+    highlight_colors=None,   # {InChIKey: "Label"}
+    ref_inchikey: str | None = None,
 ) -> None:
-    """3D 空間に electronic / electrostatic / orbital の寄与をプロットする。
+    """Plot contributions in 3D (electronic / electrostatic / orbital).
 
     Axes
     ----
@@ -110,10 +119,34 @@ def plot_3d_contributions(
     z : lumo_cont          -> orbital [kcal/mol]
 
     highlight_colors : dict or None
-        {InChIKey: "Label"} の辞書。
-        - 指定された InChIKey の点は、プロットと垂線・射影を
-          「大きく・不透明」にしてハイライト。
-        - "Label" はその点の近くに図中表示する。
+        {InChIKey: "Label"}.
+        - Points whose InChIKey is in the dict are highlighted:
+          larger, opaque markers with projection lines.
+        - "Label" is shown near the corresponding point.
+
+    ref_inchikey : str or None
+        If not None, all (x, y, z) values are shifted to
+            value(InChIKey) - value(ref_inchikey)
+        for each of electronic / electrostatic / lumo.
+
+    Contribution fractions
+    ----------------------
+    After (optional) shifting by ref_inchikey, the contribution fractions
+    are computed as
+
+        S_x = sum_i |x_i|
+        S_y = sum_i |y_i|
+        S_z = sum_i |z_i|
+        S_tot = S_x + S_y + S_z
+
+        frac_x = S_x / S_tot
+        frac_y = S_y / S_tot
+        frac_z = S_z / S_tot
+
+    (If S_tot == 0, all three fractions are set to 0.)
+
+    These fractions are shown in parentheses under each axis label
+    as percentages, e.g. "electronic [kcal/mol]\\n(42.3%)".
     """
     required_cols = [
         "electronic_cont",
@@ -126,7 +159,7 @@ def plot_3d_contributions(
         if col not in df.columns:
             raise ValueError(f"Required column '{col}' not found in DataFrame.")
 
-    # ハイライト用マップ（実際には InChIKey -> Label の対応）
+    # highlight map (InChIKey -> Label)
     if highlight_colors is None:
         highlight_map: dict[str, str] = {}
     elif isinstance(highlight_colors, dict):
@@ -136,21 +169,49 @@ def plot_3d_contributions(
             "highlight_colors must be a dict like {InChIKey: 'Label'} or None."
         )
 
-    # regression があるデータだけ使用
+    # use only rows with regression values
     df_reg = df.dropna(
         subset=["electronic_cont", "electrostatic_cont", "lumo_cont", "regression"]
-    )
+    ).copy()
+
+    # --- shift to differences vs ref_inchikey, if requested ---
+    if ref_inchikey is not None:
+        if ref_inchikey not in df_reg["InChIKey"].values:
+            raise ValueError(
+                f"ref_inchikey '{ref_inchikey}' was not found in DataFrame."
+            )
+        ref_row = df_reg[df_reg["InChIKey"] == ref_inchikey].iloc[0]
+        ref_e = float(ref_row["electronic_cont"])
+        ref_es = float(ref_row["electrostatic_cont"])
+        ref_l = float(ref_row["lumo_cont"])
+
+        df_reg["electronic_cont"] = df_reg["electronic_cont"] - ref_e
+        df_reg["electrostatic_cont"] = df_reg["electrostatic_cont"] - ref_es
+        df_reg["lumo_cont"] = df_reg["lumo_cont"] - ref_l
 
     x_reg = df_reg["electronic_cont"].values
     y_reg = df_reg["electrostatic_cont"].values
     z_reg = df_reg["lumo_cont"].values
     inchis = df_reg["InChIKey"].values
 
-    # 各点がハイライト対象かどうか
+    # --- contribution fractions (absolute-sum based) ---
+    sum_abs_x = float(np.sum(np.abs(x_reg)))
+    sum_abs_y = float(np.sum(np.abs(y_reg)))
+    sum_abs_z = float(np.sum(np.abs(z_reg)))
+    sum_abs_total = sum_abs_x + sum_abs_y + sum_abs_z
+
+    if sum_abs_total == 0.0:
+        frac_x = frac_y = frac_z = 0.0
+    else:
+        frac_x = sum_abs_x / sum_abs_total
+        frac_y = sum_abs_y / sum_abs_total
+        frac_z = sum_abs_z / sum_abs_total
+
+    # highlight flags
     is_high = np.array([ik in highlight_map for ik in inchis], dtype=bool)
     is_norm = ~is_high
 
-    # 軸範囲（後で 1:1:1 にする）
+    # axis ranges (later enforce 1:1:1 aspect ratio)
     x_all = x_reg
     y_all = y_reg
     z_all = z_reg
@@ -175,18 +236,18 @@ def plot_3d_contributions(
     fig.patch.set_alpha(0.0)
     ax = fig.add_subplot(111, projection="3d")
 
-    # 軸リミットを設定
+    # axis limits
     ax.set_xlim(x_min_lim, x_max_lim)
     ax.set_ylim(y_min_lim, y_max_lim)
     ax.set_zlim(z_min_lim, z_max_lim)
 
-    # 3軸スケールを揃える
+    # 1:1:1 aspect
     span_x = x_max_lim - x_min_lim
     span_y = y_max_lim - y_min_lim
     span_z = z_max_lim - z_min_lim
     ax.set_box_aspect((span_x, span_y, span_z))
 
-    # 目盛は整数のみ
+    # integer ticks only
     xticks = np.arange(int(np.floor(x_min_lim)), int(np.ceil(x_max_lim)) + 1)
     yticks = np.arange(int(np.floor(y_min_lim)), int(np.ceil(y_max_lim)) + 1)
     zticks = np.arange(int(np.floor(z_min_lim)), int(np.ceil(z_max_lim)) + 1)
@@ -194,7 +255,33 @@ def plot_3d_contributions(
     ax.set_yticks(yticks)
     ax.set_zticks(zticks)
 
-    # 散布図：通常点（半透明黒）
+    # axis colors
+    color_x = "darkmagenta"   # electronic
+    color_y = "forestgreen"   # electrostatic
+    color_z = "saddlebrown"   # orbital
+
+    ax.tick_params(axis="x", colors=color_x, pad=0)
+    ax.tick_params(axis="y", colors=color_y, pad=0)
+    ax.tick_params(axis="z", colors=color_z, pad=0)
+
+    for lbl in ax.get_xticklabels():
+        lbl.set_color(color_x)
+    for lbl in ax.get_yticklabels():
+        lbl.set_color(color_y)
+    for lbl in ax.get_zticklabels():
+        lbl.set_color(color_z)
+
+    # try to color the 3D axis lines (version-dependent)
+    for axis3d, c in [
+        (getattr(ax, "w_xaxis", None), color_x),
+        (getattr(ax, "w_yaxis", None), color_y),
+        (getattr(ax, "w_zaxis", None), color_z),
+    ]:
+        if axis3d is not None and hasattr(axis3d, "line"):
+            axis3d.line.set_color(c)
+            axis3d.line.set_linewidth(1.5)
+
+    # base scatter: normal points (semi-transparent black)
     if is_norm.any():
         ax.scatter(
             x_reg[is_norm],
@@ -207,7 +294,7 @@ def plot_3d_contributions(
             edgecolor="none",
         )
 
-    # 散布図：ハイライト点（大きく・不透明）
+    # highlighted points: larger and opaque
     if is_high.any():
         ax.scatter(
             x_reg[is_high],
@@ -220,54 +307,54 @@ def plot_3d_contributions(
             edgecolor="none",
         )
 
-    # 見やすい視点（※ここまでで軸が決まった状態にする）
+    # viewpoint (after limits are set)
     ax.view_init(elev=22, azim=35)
 
-    # ★ 最終的な軸リミットを取得して、それを射影面に使う ★
+    # final limits for planes
     x_min_plane, x_max_plane = ax.get_xlim3d()
     y_min_plane, y_max_plane = ax.get_ylim3d()
     z_min_plane, z_max_plane = ax.get_zlim3d()
 
-    # --- 各平面（xy, yz, zx）を薄い色で描画 ---
-    # xy-plane (z = z_min_plane) -> 薄い赤
+    # --- planes (xy, yz, zx) in different greys ---
     xy_verts = [
         [x_min_plane, y_min_plane, z_min_plane],
         [x_max_plane, y_min_plane, z_min_plane],
         [x_max_plane, y_max_plane, z_min_plane],
         [x_min_plane, y_max_plane, z_min_plane],
     ]
-    poly_xy = Poly3DCollection([xy_verts], facecolors=(1, 0, 0, 0.05), edgecolors="none")
+    poly_xy = Poly3DCollection(
+        [xy_verts],
+        facecolors=(0.9, 0.9, 0.9, 0.4),
+        edgecolors="none",
+    )
     ax.add_collection3d(poly_xy)
 
-    # yz-plane (x = x_min_plane) -> 薄い青
     yz_verts = [
         [x_min_plane, y_min_plane, z_min_plane],
         [x_min_plane, y_max_plane, z_min_plane],
         [x_min_plane, y_max_plane, z_max_plane],
         [x_min_plane, y_min_plane, z_max_plane],
     ]
-    poly_yz = Poly3DCollection([yz_verts], facecolors=(0, 0, 1, 0.05), edgecolors="none")
+    poly_yz = Poly3DCollection(
+        [yz_verts],
+        facecolors=(0.8, 0.8, 0.8, 0.4),
+        edgecolors="none",
+    )
     ax.add_collection3d(poly_yz)
 
-    # zx-plane (y = y_min_plane) -> 薄い緑
     zx_verts = [
         [x_min_plane, y_min_plane, z_min_plane],
         [x_max_plane, y_min_plane, z_min_plane],
         [x_max_plane, y_min_plane, z_max_plane],
         [x_min_plane, y_min_plane, z_max_plane],
     ]
-    poly_zx = Poly3DCollection([zx_verts], facecolors=(0, 1, 0, 0.05), edgecolors="none")
+    poly_zx = Poly3DCollection(
+        [zx_verts],
+        facecolors=(0.7, 0.7, 0.7, 0.4),
+        edgecolors="none",
+    )
     ax.add_collection3d(poly_zx)
 
-    # 射影用の基本色（高透過率）
-    base_xy = np.array([1.0, 0.0, 0.0])   # red
-    base_yz = np.array([0.0, 0.0, 1.0])   # blue
-    base_zx = np.array([0.0, 0.6, 0.0])   # green
-
-    def rgba(base_color, alpha: float):
-        return (base_color[0], base_color[1], base_color[2], alpha)
-
-    # --- 垂直線と射影 ---
     def add_projections(
         xs: np.ndarray,
         ys: np.ndarray,
@@ -276,20 +363,16 @@ def plot_3d_contributions(
         size: float,
         lw: float = 0.5,
     ) -> None:
-        """各点から xy, xz, yz 平面への垂線・射影点を描く。
-
-        - xy-plane (z = z_min_plane): 赤
-        - yz-plane (x = x_min_plane): 青
-        - zx-plane (y = y_min_plane): 緑
-        """
+        """Draw projection lines and points onto xy, xz, yz planes."""
         line_alpha = alpha * 0.6
         for xi, yi, zi in zip(xs, ys, zs):
-            # xy-plane: z = z_min_plane (red)
+            # to xy-plane: along -z (z-axis color)
             ax.plot(
                 [xi, xi],
                 [yi, yi],
                 [zi, z_min_plane],
-                color=rgba(base_xy, line_alpha),
+                color=color_z,
+                alpha=line_alpha,
                 linewidth=lw,
             )
             ax.plot(
@@ -297,16 +380,18 @@ def plot_3d_contributions(
                 [yi],
                 [z_min_plane],
                 "o",
-                color=rgba(base_xy, alpha),
+                color=color_z,
+                alpha=alpha,
                 markersize=size,
             )
 
-            # xz-plane: y = y_min_plane (green)
+            # to xz-plane: along -y (y-axis color)
             ax.plot(
                 [xi, xi],
                 [yi, y_min_plane],
                 [zi, zi],
-                color=rgba(base_zx, line_alpha),
+                color=color_y,
+                alpha=line_alpha,
                 linewidth=lw,
             )
             ax.plot(
@@ -314,16 +399,18 @@ def plot_3d_contributions(
                 [y_min_plane],
                 [zi],
                 "o",
-                color=rgba(base_zx, alpha),
+                color=color_y,
+                alpha=alpha,
                 markersize=size,
             )
 
-            # yz-plane: x = x_min_plane (blue)
+            # to yz-plane: along -x (x-axis color)
             ax.plot(
                 [xi, x_min_plane],
                 [yi, yi],
                 [zi, zi],
-                color=rgba(base_yz, line_alpha),
+                color=color_x,
+                alpha=line_alpha,
                 linewidth=lw,
             )
             ax.plot(
@@ -331,11 +418,11 @@ def plot_3d_contributions(
                 [yi],
                 [zi],
                 "o",
-                color=rgba(base_yz, alpha),
+                color=color_x,
+                alpha=alpha,
                 markersize=size,
             )
 
-    # 通常点の垂線・射影（小さく・半透明）
     if is_norm.any():
         add_projections(
             x_reg[is_norm],
@@ -346,7 +433,6 @@ def plot_3d_contributions(
             lw=0.5,
         )
 
-    # ハイライト点の垂線・射影（大きく・不透明）
     if is_high.any():
         add_projections(
             x_reg[is_high],
@@ -357,33 +443,27 @@ def plot_3d_contributions(
             lw=0.8,
         )
 
-    # ハイライト点のラベルを図中に表示
-    for ik, label in highlight_map.items():
-        mask = (inchis == ik)
-        if not np.any(mask):
-            continue
-        xi = x_reg[mask][0]
-        yi = y_reg[mask][0]
-        zi = z_reg[mask][0]
-        # 少しだけオフセットをつけて重なりを避ける
-        ax.text(
-            xi + 0.02 * span_x,
-            yi + 0.02 * span_y,
-            zi + 0.02 * span_z,
-            label,
-            fontsize=8,
-            color="black",
-            ha="left",
-            va="bottom",
-        )
+    # axis labels with contribution fractions
+    ax.set_xlabel(
+        f"electronic [kcal/mol]\n({frac_x*100:.1f}%)",
+        color=color_x,
+    )
+    ax.set_ylabel(
+        f"electrostatic [kcal/mol]\n({frac_y*100:.1f}%)",
+        color=color_y,
+    )
+    ax.set_zlabel(
+        f"orbital [kcal/mol]\n({frac_z*100:.1f}%)",
+        color=color_z,
+    )
 
-    # 軸ラベル
-    ax.set_xlabel("electronic [kcal/mol]")
-    ax.set_ylabel("electrostatic [kcal/mol]")
-    ax.set_zlabel("orbital [kcal/mol]")
-
-    # 凡例なし、見切れ防止
     plt.tight_layout()
+
+    # ★ create folder if needed, then save
+    save_path = Path(save_path)
+    if save_path.parent and not save_path.parent.exists():
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
     fig.savefig(
         save_path,
         dpi=500,
@@ -391,10 +471,11 @@ def plot_3d_contributions(
         bbox_inches="tight",
         pad_inches=1,
     )
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+    plt.close(fig)
 
+
+
+from pathlib import Path  # ★ 追加
 
 def plot_contribution_bars(
     df: pd.DataFrame,
@@ -537,7 +618,7 @@ def plot_contribution_bars(
     else:
         ax.set_ylabel(
             "contribution difference [kcal/mol]"
-            #f"\n(relative to {ref_inchikey})"
+            # f"\n(relative to {ref_inchikey})"
         )
         # title = "Contribution differences"
 
@@ -551,9 +632,114 @@ def plot_contribution_bars(
     ax.margins(x=0.1)
 
     fig.tight_layout()
+
+    # ★ save_path のフォルダを自動作成してから保存
+    save_path = Path(save_path)
+    if save_path.parent and not save_path.parent.exists():
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
     fig.savefig(save_path, dpi=400)
     plt.close(fig)
 
+
+from matplotlib import pyplot as plt
+from matplotlib.patches import Rectangle, Polygon
+import numpy as np
+import pandas as pd
+
+
+def _draw_horizontal_arrow(
+    ax,
+    base: float,
+    val: float,
+    y: float,
+    height: float,
+    color: str,
+    alpha: float,
+    span: float,
+) -> None:
+    """Draw a filled horizontal arrow from `base` to `base + val` at y = `y`.
+
+    The maximum thickness of the arrow body is given by `height`.
+    A small overlap (≈0.002 * span) is introduced between the body and head
+    to remove any gap between them.
+    """
+    if val == 0:
+        return
+
+    x_start = base
+    x_end = base + val
+    direction = np.sign(val)
+    length = abs(val)
+
+    # Fixed arrow-head length in data units
+    head_len = 0.1
+    body_len = length - head_len
+
+    # Very short arrows: triangle only
+    if body_len <= 0:
+        base_x = x_start
+        head = Polygon(
+            [
+                (x_end, y),                    # tip
+                (base_x, y + height / 2.0),    # upper base
+                (base_x, y - height / 2.0),    # lower base
+            ],
+            closed=True,
+            facecolor=color,
+            edgecolor="none",
+            alpha=alpha,
+        )
+        ax.add_patch(head)
+        return
+
+    # Normal case: rectangle body + triangle head
+    if direction > 0:
+        body_x0 = x_start
+        body_x1 = x_start + body_len
+        head_tip_x = x_end
+    else:
+        body_x0 = x_start - body_len
+        body_x1 = x_start
+        head_tip_x = x_end
+
+    # Arrow body (rectangle)
+    rect_x = min(body_x0, body_x1)
+    rect_w = abs(body_x1 - body_x0)
+    body = Rectangle(
+        (rect_x, y - height / 2.0),
+        rect_w,
+        height,
+        facecolor=color,
+        edgecolor="none",
+        alpha=alpha,
+    )
+    ax.add_patch(body)
+
+    # Overlap between body and head to avoid any visual gap
+    overlap = min(0.0002 * span, body_len * 0.5, head_len * 0.5)
+
+    if direction > 0:
+        base_x = body_x1 - overlap
+    else:
+        base_x = body_x0 + overlap
+
+    # Arrow head (triangle)
+    head = Polygon(
+        [
+            (head_tip_x, y),                    # tip
+            (base_x, y + height / 2.0),         # upper base
+            (base_x, y - height / 2.0),         # lower base
+        ],
+        closed=True,
+        facecolor=color,
+        edgecolor="none",
+        alpha=alpha,
+    )
+    ax.add_patch(head)
+
+
+from pathlib import Path  # ★ 追加
 
 def plot_pair_stacked_contributions(
     df: pd.DataFrame,
@@ -562,28 +748,32 @@ def plot_pair_stacked_contributions(
     save_path: str,
 ) -> None:
     """
-    2つの InChIKey (target と ref) について、
-    electronic / electrostatic / lumo の寄与の差分
+    For two InChIKeys (target and ref), plot the contribution differences
         (target - ref)
-    を、横向きのずらし積み上げ棒グラフで描画する。
+    of electronic / electrostatic / lumo as horizontally stacked arrows.
 
-    棒の構成（上から下）:
-        - 一番上: 0 から伸びる electronic の横棒
-        - 真ん中: electronic の終点から伸びる electrostatic の横棒
-        - 一番下: (electronic + electrostatic) の終点から伸びる lumo の横棒
-      → lumo の棒の終点が 3 つの寄与の和 (electronic + electrostatic + lumo)
+    Arrow structure (from top to bottom):
+        - top   : arrow from 0 to electronic
+        - middle: arrow from electronic to electronic + electrostatic
+        - bottom: arrow from electronic + electrostatic to
+                  electronic + electrostatic + lumo
 
-    仕様:
-    - 棒の向きは横向き (barh)。
-    - 各棒の「すぐ外側」に寄与値をテキスト表示。
-    - 横軸に 0 の場所の目盛りと値を表示し、0 の位置に点線を引く。
-    - electronic, electronic+electrostatic, electronic+electrostatic+lumo
-      の位置に目盛りと値を表示し、総和位置まで点線を引く。
-    - 図は横長のアスペクト比。
-    - 色:
-        electronic    : 赤紫 (darkmagenta)
-        electrostatic : 緑   (forestgreen)
-        lumo          : 茶色 (saddlebrown)
+    -> The tip of the lumo arrow corresponds to the total contribution
+       (electronic + electrostatic + lumo).
+
+    Spec:
+    - Horizontal arrows instead of barh.
+    - Each arrow has a thick filled shaft.
+    - Contribution values are displayed with explicit signs (+X.XX / -X.XX),
+      right-aligned, next to the labels on the left (so the three numbers
+      line up vertically).
+    - x-axis is roughly symmetric so that 0 is near the center, with slightly
+      more space on the left for labels and values.
+    - A dashed vertical line is drawn at x = 0.
+    - Colors:
+        electronic    : darkmagenta
+        electrostatic : forestgreen
+        lumo          : saddlebrown
     """
 
     required_cols = [
@@ -596,7 +786,7 @@ def plot_pair_stacked_contributions(
         if col not in df.columns:
             raise ValueError(f"DataFrame must contain column '{col}'.")
 
-    # --- 対象 & 比較分子のレコード取得 ---
+    # --- fetch rows for target and reference ---
     if target_inchikey not in df["InChIKey"].values:
         raise ValueError(f"target_inchikey '{target_inchikey}' was not found in DataFrame.")
     if ref_inchikey not in df["InChIKey"].values:
@@ -605,7 +795,7 @@ def plot_pair_stacked_contributions(
     row_target = df[df["InChIKey"] == target_inchikey].iloc[0]
     row_ref    = df[df["InChIKey"] == ref_inchikey].iloc[0]
 
-    # 寄与 (target - ref)
+    # contributions (target - ref)
     target_vals = np.array(
         [
             float(row_target["electronic_cont"]),
@@ -623,109 +813,98 @@ def plot_pair_stacked_contributions(
     contrib = target_vals - ref_vals
     elec, es, lumo = contrib
 
-    # 累積位置
+    # cumulative positions
     s1 = elec
     s2 = elec + es
-    s3 = elec + es + lumo  # 最終的な 3 つの寄与の和
+    s3 = elec + es + lumo  # total
 
-    # --- x 範囲の決定（0 が真ん中に来るように左右対称にする） ---
-    # 棒が到達しうる位置の最大絶対値
+    # --- x-range (start symmetric around 0, then add a little left space) ---
     core = np.max(np.abs([s1, s2, s3]))
     if core == 0:
-        core = 1.0  # 全部 0 のときの保険
+        core = 1.0  # fallback
 
-    # 少し余裕を持たせた半幅
-    margin_ratio = 0.3
-    half_width = core * (1.0 + margin_ratio)
+    base_margin_ratio = 0.5
+    half_width = core * (1.0 + base_margin_ratio)
 
+    # initial symmetric limits
     x_min = -half_width
     x_max = +half_width
-    span = x_max - x_min  # 注釈位置計算などに使用
 
-    # --- 図の準備（横長） ---
-    fig, ax = plt.subplots(figsize=(5, 1.5))
+    # slightly smaller extra left space than before
+    base_span = x_max - x_min
+    extra_left = 0.25 * base_span
+    x_min = x_min - extra_left
 
-    # 棒の y 位置（上から順に 3 本）
+    # final span
+    span = x_max - x_min
+
+    # --- figure (landscape) ---
+    fig, ax = plt.subplots(figsize=(4, 1.5))
+
+    # y positions (top to bottom)
     y_elec = 2.0
     y_es   = 1.0
     y_lumo = 0.0
     y_pos  = [y_elec, y_es, y_lumo]
     y_labels = ["electronic", "electrostatic", "lumo"]
 
-    # 色指定
-    color_elec = "darkmagenta"   # 赤紫
-    color_es   = "forestgreen"   # 緑
-    color_lumo = "saddlebrown"   # 茶色
+    # colors
+    color_elec = "darkmagenta"
+    color_es   = "forestgreen"
+    color_lumo = "saddlebrown"
 
-    # --- 棒グラフ (横向き) ---
-    # electronic: 0 → elec
-    ax.barh(
-        y_elec,
-        width=elec,
-        left=0.0,
+    # arrow thickness: revert to original height = 1.0
+    arrow_height = 1.0
+
+    # --- arrows ---
+    _draw_horizontal_arrow(
+        ax,
+        base=0.0,
+        val=elec,
+        y=y_elec,
+        height=arrow_height,
         color=color_elec,
         alpha=0.8,
-        height=1,
+        span=span,
     )
 
-    # electrostatic: s1 → s2
-    ax.barh(
-        y_es,
-        width=es,
-        left=s1,
+    _draw_horizontal_arrow(
+        ax,
+        base=s1,
+        val=es,
+        y=y_es,
+        height=arrow_height,
         color=color_es,
         alpha=0.8,
-        height=1,
+        span=span,
     )
 
-    # lumo: s2 → s3
-    ax.barh(
-        y_lumo,
-        width=lumo,
-        left=s2,
+    _draw_horizontal_arrow(
+        ax,
+        base=s2,
+        val=lumo,
+        y=y_lumo,
+        height=arrow_height,
         color=color_lumo,
         alpha=0.8,
-        height=1,
+        span=span,
     )
 
-    # --- 棒の外側に寄与値を表示 ---
-    def annotate_bar(base: float, val: float, y: float) -> None:
-        x_end = base + val
-        text_offset = 0.02 * span
-
-        if val >= 0:
-            x_text = x_end + text_offset
-            ha = "left"
-        else:
-            x_text = x_end - text_offset
-            ha = "right"
-
-        ax.text(
-            x_text,
-            y,
-            f"{val:.2f}",
-            va="center",
-            ha=ha,
-            # fontsize=8,
-        )
-
-    annotate_bar(0.0, elec, y_elec)
-    annotate_bar(s1, es, y_es)
-    annotate_bar(s2, lumo, y_lumo)
-
-    # --- 軸まわりの設定 ---
-    # y 範囲少し広めにとる（下に矢印を描くため）
+    # --- axes settings ---
     y_min_plot = -0.5
     y_max_plot = 2.5
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min_plot, y_max_plot)
 
-    # 縦軸はなくす
+    # remove y-axis but keep labels as text
     ax.yaxis.set_visible(False)
     ax.spines["left"].set_visible(False)
 
-    # electronic / electrostatic / lumo のラベルだけ残す（テキストで描画）
-    label_x = x_min - 0.02 * span
+    # label position (left) and value position (slightly to the right, but
+    # closer to the axis label than before)
+    label_x = x_min + 0.015 * span
+    value_right_x = label_x + 0.22 * span  # closer to labels than previous 0.30
+
     for ypos, label in zip(y_pos, y_labels):
         ax.text(
             label_x,
@@ -736,23 +915,38 @@ def plot_pair_stacked_contributions(
             # fontsize=8,
         )
 
-    # 横軸ラベル
-    ax.set_xlabel("contribution difference [kcal/mol]")
+    # --- annotate contribution values (right-aligned, vertically aligned) ---
+    def annotate_value(val: float, y: float) -> None:
+        ax.text(
+            value_right_x,
+            y,
+            f"{val:+.2f}",   # always show sign (+X.XX / -X.XX)
+            va="center",
+            ha="right",      # right-aligned
+            # fontsize=8,
+        )
 
-    # x 方向の目盛り（0 と s3 のみ）
+    annotate_value(elec, y_elec)
+    annotate_value(es,   y_es)
+    annotate_value(lumo, y_lumo)
+
+    # x-axis label
+    ax.set_xlabel("contribution [kcal/mol]")
+
+    # ticks only at 0 and total (s3)
     xticks = sorted(set([0.0, s3]))
     ax.set_xticks(xticks)
     ax.set_xticklabels([f"{x:.2f}" for x in xticks])
 
-    # 0 の位置に縦の点線
+    # dashed line at x=0
     ax.axvline(0.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
 
-    # 上・右・下の枠を非表示（下は矢印に置き換える）
+    # remove box edges (bottom will be replaced by arrow axis)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["bottom"].set_visible(False)
 
-    # --- 右向き矢印としての横軸を描画（0 が中央になるように左右対称の範囲を使用） ---
+    # --- draw main horizontal axis as a right-pointing arrow ---
     arrow_y = y_min_plot
     ax.annotate(
         "",
@@ -761,16 +955,21 @@ def plot_pair_stacked_contributions(
         arrowprops=dict(arrowstyle="->", lw=1.0, color="black"),
     )
 
-    # タイトル（コメントはそのまま残す）
+    # title (comment kept as requested)
     # ax.set_title(
     #     f"Contributions: {target_inchikey} − {ref_inchikey}",
     #     fontsize=9,
     # )
 
     fig.tight_layout()
+
+    # ★ ここでフォルダを自動作成してから保存 ★
+    save_path = Path(save_path)
+    if save_path.parent and not save_path.parent.exists():
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
     fig.savefig(save_path, dpi=400)
     plt.close(fig)
-
 
 
 def make_cube(df,path):
@@ -1060,73 +1259,124 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
                 f_out.write("\n".join(new_lines) + "\n")
 
 
-def graph_(df,path):
-    #直線表示
-    plt.figure(figsize=(3, 3))
-    plt.yticks([-4,0,4])
-    plt.xticks([-4,0,4])
-    plt.ylim(-4,4)
-    plt.xlim(-4,4)
-    
-    plt.scatter(df["ΔΔG.expt."],df["regression"],c="black",linewidths=0,s=10,alpha=0.5)
-    rmse=nan_rmse(df["regression"].values,df["ΔΔG.expt."].values)
-    r2=nan_r2(df["regression"].values,df["ΔΔG.expt."].values)
-    plt.scatter([],[],label="regression $r^2$ = " + f"{r2:.2f}"+"\n$\mathrm{RMSE}$"+f" = {rmse:.2f} kcal/mol"
-                   ,c="black",linewidths=0,  alpha=0.5, s=10)
-    
-    rmse=nan_rmse(df["cv"].values,df["ΔΔG.expt."].values)
-    r2=nan_r2(df["cv"].values,df["ΔΔG.expt."].values)
-    plt.scatter([],[],label="LOOCV $r^2$ = " + f"{r2:.2f}"+"\n$\mathrm{RMSE}$"+f" = {rmse:.2f} kcal/mol"
-                   ,c="dodgerblue",linewidths=0,  alpha=0.6, s=10)
-    
-    # rmse=nan_rmse(df["prediction"].values,df["ΔΔG.expt."].values)
-    # r2=nan_r2(df["prediction"].values,df["ΔΔG.expt."].values)
-    # plt.scatter([],[],label="$\mathrm{RMSE_{test}}$"+f" = {rmse:.2f}"
-                #    +"\n$r^2_{\mathrm{test}}$ = " + f"{r2:.2f}",c="red",linewidths=0,  alpha=0.8, s=10)
+from matplotlib import pyplot as plt
+import pandas as pd
+from pathlib import Path  # ← 追加
 
-    plt.scatter(df["ΔΔG.expt."],df["cv"],c="dodgerblue",linewidths=0,s=10,alpha=0.6)
-    # plt.scatter(df["ΔΔG.expt."],df["prediction"],c="red",linewidths=0,s=10,alpha=0.8)
-    plt.xlabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt}}$ [kcal/mol]")
-    plt.ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{predict}}$ [kcal/mol]")
-    plt.legend(
-    loc='lower right',
-    fontsize=6,
-    ncol=1,
-    borderpad=0.2,        # 枠内の余白
-    #labelspacing=0.2,     # ラベル同士の間隔
-    handletextpad=0.3,    # マーカーとテキストの間隔
-    #borderaxespad=0.2,    # 軸との距離
-    #columnspacing=0.5,    # 列間（ncol>1のとき有効）
-    frameon=True,
-    framealpha=0.8,
+
+def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
+    """Plot experimental vs predicted ΔΔG‡ (parity plot style)."""
+    # figure & axis range
+    plt.figure(figsize=(3, 3))
+    plt.yticks([-4, 0, 4])
+    plt.xticks([-4, 0, 4])
+    plt.ylim(-4, 4)
+    plt.xlim(-4, 4)
+
+    # regression points
+    plt.scatter(
+        df["ΔΔG.expt."],
+        df["regression"],
+        c="black",
+        linewidths=0,
+        s=10,
+        alpha=0.5,
+    )
+    rmse = nan_rmse(df["regression"].values, df["ΔΔG.expt."].values)
+    r2 = nan_r2(df["regression"].values, df["ΔΔG.expt."].values)
+    plt.scatter(
+        [],
+        [],
+        label=(
+            "regression $r^2$ = "
+            f"{r2:.2f}\n"
+            r"$\mathrm{RMSE}$"
+            f" = {rmse:.2f} kcal/mol"
+        ),
+        c="black",
+        linewidths=0,
+        alpha=0.5,
+        s=10,
     )
 
+    # LOOCV points
+    rmse = nan_rmse(df["cv"].values, df["ΔΔG.expt."].values)
+    r2 = nan_r2(df["cv"].values, df["ΔΔG.expt."].values)
+    plt.scatter(
+        [],
+        [],
+        label=(
+            "LOOCV $r^2$ = "
+            f"{r2:.2f}\n"
+            r"$\mathrm{RMSE}$"
+            f" = {rmse:.2f} kcal/mol"
+        ),
+        c="dodgerblue",
+        linewidths=0,
+        alpha=0.6,
+        s=10,
+    )
 
-    plt.text(-3.6, 3.6, "$\mathit{N}$"+f' = {len(df[df["test"]==0])}',# transform=ax.transAxes, 
-                fontsize=10, verticalalignment='top')
+    plt.scatter(
+        df["ΔΔG.expt."],
+        df["cv"],
+        c="dodgerblue",
+        linewidths=0,
+        s=10,
+        alpha=0.6,
+    )
+
+    plt.xlabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt}}$ [kcal/mol]")
+    plt.ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{predict}}$ [kcal/mol]")
+
+    plt.legend(
+        loc="lower right",
+        fontsize=6,
+        ncol=1,
+        borderpad=0.2,
+        handletextpad=0.3,
+        frameon=True,
+        framealpha=0.8,
+    )
+
+    plt.text(
+        -3.6,
+        3.6,
+        "$\mathit{N}$" + f' = {len(df[df["test"] == 0])}',
+        fontsize=10,
+        verticalalignment="top",
+    )
 
     plt.tight_layout()
-    plt.savefig(path.replace(".pkl",".png"),dpi=500,transparent=True)
+
+    # --- create folder if needed and save ---
+    png_path = Path(path.replace(".pkl", ".png"))
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(png_path, dpi=500, transparent=True)
+
     # df = df.reindex(df["error"].abs().sort_values(ascending=False).index)
 
 
-def bar(path: str) -> None:
+def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
     """Plot LOOCV R² and RMSE for several regression models and save as PNG.
 
     Parameters
     ----------
-    path : str
+    csv_path : str
         Path to the CSV file containing the LOOCV results.
-        The figure is saved with the same basename and `.png` extension.
+
+    save_path : str
+        Output image path, e.g. "folder/file.png".
+        Parent folders are created automatically if they do not exist.
 
     Returns
     -------
     None
     """
-    df = pd.read_csv(path, index_col=0)
+    df = pd.read_csv(csv_path, index_col=0)
 
     models = [
-        (r"PLS [+-]?\d+ cv",   "PLS"),
+        (r"PLS [+-]?\d+ cv",      "PLS"),
         (r"^Ridge .{0,} cv",      "Ridge"),
         (r"^ElasticNet .{0,} cv", "Elastic Net"),
         (r"^Lasso .{0,} cv",      "Lasso"),
@@ -1157,7 +1407,6 @@ def bar(path: str) -> None:
         ])
         print(label, "R²:", r2_array, "RMSE:", rmse_array)
 
-        # 1モデル1本なので index 0 だけ見ればよい
         rmse_val = float(rmse_array[0])
         if rmse_val < best_rmse:
             best_rmse = rmse_val
@@ -1204,7 +1453,7 @@ def bar(path: str) -> None:
     ax1.set_xticks(x_ticks)
     ax1.set_xticklabels(labels, rotation=-20, ha="left")
 
-    # ★ 最小 RMSE のモデルラベルだけ太字にする
+    # 最小 RMSE のモデルラベルだけ太字にする
     if best_idx >= 0:
         for i, tick in enumerate(ax1.get_xticklabels()):
             if i == best_idx:
@@ -1212,10 +1461,19 @@ def bar(path: str) -> None:
 
     fig.tight_layout()
 
-    base, _ = os.path.splitext(path)
-    png_path = base + ".png"
-    fig.savefig(png_path, dpi=500, transparent=False)
+    # 保存先フォルダを作成
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
 
+    fig.savefig(save_path, dpi=500, transparent=False)
+
+
+
+import os
+from pathlib import Path
+
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def reaction_concentration_plot_complex(
@@ -1304,16 +1562,16 @@ def reaction_concentration_plot_complex(
     total_p_tmax = p_intermediate_total[t_max_idx]
     if total_p_tmax > 0:
         p_fracs = [
-            p1[t_max_idx]  * 100.0,
-            p2[t_max_idx]  * 100.0,
-            p3[t_max_idx]  * 100.0,
-            p4[t_max_idx]  * 100.0,
+            p1[t_max_idx] * 100.0,
+            p2[t_max_idx] * 100.0,
+            p3[t_max_idx] * 100.0,
+            p4[t_max_idx] * 100.0,
         ]
     else:
         p_fracs = [0.0, 0.0, 0.0, 0.0]
 
     # --- プロット ---
-    fig, ax = plt.subplots(figsize=(3, 3))#, facecolor="none")
+    fig, ax = plt.subplots(figsize=(3, 3))
     fig.patch.set_alpha(0.0)
 
     # 中間体の色
@@ -1328,7 +1586,7 @@ def reaction_concentration_plot_complex(
     product_edgecolors = [c3, c4, c3, c4]      # edge
     hatches = ["///", "\\\\", "xx", ".."]      # 2色感を出す模様
 
-    # --- 凡例ラベル（1〜4 に％を付ける） ---
+    # --- 凡例ラベル ---
     labels = [
         rf"$\bf{{1}}$ {p_fracs[0]:4.1f}%",
         rf"$\bf{{2}}$ {p_fracs[1]:4.1f}%",
@@ -1340,7 +1598,7 @@ def reaction_concentration_plot_complex(
         rf"$\bf{{2-4}}$ {p24[-1]*100:4.1f}%",
     ]
 
-    # stackplot: 下から p1, p2, p3, p4, p13, p14, p23, p24 の順に積み上げ
+    # stackplot: 下から p1, p2, p3, p4, p13, p14, p23, p24
     all_colors = base_colors + product_facecolors
 
     polys = ax.stackplot(
@@ -1361,32 +1619,16 @@ def reaction_concentration_plot_complex(
         poly.set_edgecolor(product_edgecolors[i])
         poly.set_linewidth(0.6)
 
-    # 中間体合計線（中間体層の頂部）
-    ax.plot(
-        progress,
-        p_intermediate_total,
-        color="gray",
-        linestyle="-",
-    )
+    # 中間体合計線
+    ax.plot(progress, p_intermediate_total, color="gray", linestyle="-")
     x0 = progress[t_max_idx]
     y0 = p_intermediate_total[t_max_idx]
 
-    # y = 0 まで垂線を下ろす（緑）
-    ax.plot(
-        [x0, x0],    # x は固定
-        [0, y0],     # y を 0 → y0 に
-        color="green",
-        linestyle="--",
-        linewidth=1.0,
-    )
-    ax.plot(
-        [1, 1],    # x は固定
-        [0, 1],     # y を 0 → y0 に
-        color="purple",
-        linestyle="--",
-        linewidth=1.0,
-    )
-    # dialcohol 合計線（生成物まで含めた「積み上げ頂部」）
+    # y = 0 まで垂線
+    ax.plot([x0, x0], [0, y0], color="green", linestyle="--", linewidth=1.0)
+    ax.plot([1, 1], [0, 1], color="purple", linestyle="--", linewidth=1.0)
+
+    # dialcohol 合計線
     ax.plot(
         progress,
         p_intermediate_total + pp_total,
@@ -1400,11 +1642,9 @@ def reaction_concentration_plot_complex(
     ax.set_yticks([0, 0.5, 1])
     ax.set_ylim(-0.02, 1.2)
     ax.set_xlim(-0.01, 1.01)
-    # ax.set_aspect("equal", adjustable="box")
 
-    # 凡例作成
+    # 凡例
     handles, legend_labels = ax.get_legend_handles_labels()
-
     leg = ax.legend(
         handles[::-1],
         legend_labels[::-1],
@@ -1418,10 +1658,9 @@ def reaction_concentration_plot_complex(
         borderaxespad=0.2,
         frameon=False,
         framealpha=0.8,
-        prop={"family": "monospace", "size": 8}
+        prop={"family": "monospace", "size": 8},
     )
 
-    # 「1,2,3,4」ラベルだけ緑色にする
     for text in leg.get_texts():
         txt = text.get_text()
         if txt.startswith(r"$\bf{1}$") or txt.startswith(r"$\bf{2}$") \
@@ -1431,41 +1670,48 @@ def reaction_concentration_plot_complex(
             text.set_color("purple")
 
     plt.tight_layout()
+
+    # ---------- ensure directory exists before saving ----------
+    save_path = Path(save_path)
+    if save_path.parent and not save_path.parent.exists():
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
     plt.savefig(save_path, dpi=500, transparent=False)
+
 
 
 if __name__ == '__main__':
     evaluate_result(f"data/data_electronic_electrostatic_lumo_regression.pkl")
 
-    df=best_parameter("data/data_electronic_electrostatic_lumo_results.csv")
-    plot_3d_contributions(df, "data/contributions_3d.png", highlight_colors={"DSSYKIVIOFKYAU-MHPPCMCBSA-N":"1","UMJJFEIKYGFCAT-HOSYLAQJSA-N":"2","YKFKEYKJGVSEIX-KWYDOPHBSA-N":"3"})
-    plot_contribution_bars(df,inchikeys=["DSSYKIVIOFKYAU-MHPPCMCBSA-N","UMJJFEIKYGFCAT-HOSYLAQJSA-N","YKFKEYKJGVSEIX-KWYDOPHBSA-N"],labels=["1","2","3"],ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/contribution_bars.png")
-    plot_pair_stacked_contributions(df, target_inchikey="DSSYKIVIOFKYAU-MHPPCMCBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/DSSYKIVIOFKYAU-MHPPCMCBSA-N.png")
-    plot_pair_stacked_contributions(df, target_inchikey="UMJJFEIKYGFCAT-HOSYLAQJSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/UMJJFEIKYGFCAT-HOSYLAQJSA-N.png")
-    plot_pair_stacked_contributions(df, target_inchikey="YKFKEYKJGVSEIX-KWYDOPHBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/YKFKEYKJGVSEIX-KWYDOPHBSA-N.png")
-    bar("data/data_electronic_electrostatic_lumo_results.csv")
+    df=best_parameter("data/data_electronic_electrostatic_lumo_results.csv")#highlight_colors={"DSSYKIVIOFKYAU-MHPPCMCBSA-N":"1","UMJJFEIKYGFCAT-HOSYLAQJSA-N":"2","YKFKEYKJGVSEIX-KWYDOPHBSA-N":"3"}
+    plot_3d_contributions(df, "data/validation/contributions_3d.png", highlight_colors={"RWCCWEUUXYIKHB-KHWBWMQUSA-N":""}, ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N")
+    plot_contribution_bars(df,inchikeys=["DSSYKIVIOFKYAU-MHPPCMCBSA-N","UMJJFEIKYGFCAT-HOSYLAQJSA-N","YKFKEYKJGVSEIX-KWYDOPHBSA-N"],labels=["1","2","3"],ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/contribution_bars.png")
+    plot_pair_stacked_contributions(df, target_inchikey="DSSYKIVIOFKYAU-MHPPCMCBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/DSSYKIVIOFKYAU-MHPPCMCBSA-N.png")
+    plot_pair_stacked_contributions(df, target_inchikey="UMJJFEIKYGFCAT-HOSYLAQJSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/UMJJFEIKYGFCAT-HOSYLAQJSA-N.png")
+    plot_pair_stacked_contributions(df, target_inchikey="YKFKEYKJGVSEIX-KWYDOPHBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/YKFKEYKJGVSEIX-KWYDOPHBSA-N.png")
+    plot_loocv_metrics("data/data_electronic_electrostatic_lumo_results.csv", "data/validation/loocv_metrics.png")
     
     home = Path.home()
     out_path = home / "contributions"
     make_cube(df,out_path)
     # make_cube_with_sign_markers(df,out_path)
-    graph_(df,"data/regression.png")
+    plot_expt_vs_pred(df,"data/validation/regression.png")
 
     reaction_concentration_plot_complex(
         ΔGs=df.set_index("entry").loc[["a1","a2","a3","a4","a13","a14","a23","a24","a31","a32","a41","a42"], "prediction"].to_numpy(),
-        T=273.15,a0=1,save_path="data/a.png")
+        T=273.15,a0=1,save_path="data/test/a.png")
     reaction_concentration_plot_complex(
         ΔGs=df.set_index("entry").loc[["b1","b2","b3","b4","b13","b14","b23","b24","b31","b32","b41","b42"], "prediction"].to_numpy(),
-        T=298.15,a0=1,save_path="data/b.png")
+        T=298.15,a0=1,save_path="data/test/b.png")
     reaction_concentration_plot_complex(
         ΔGs=df.set_index("entry").loc[["c1","c2","c3","c4","c13","c14","c23","c24","c31","c32","c41","c42"], "prediction"].to_numpy(),
-        T=298.15,a0=1,save_path="data/c.png")
+        T=298.15,a0=1,save_path="data/test/c.png")
     reaction_concentration_plot_complex(
         ΔGs=df.set_index("entry").loc[["d1","d2","d3","d4","d13","d14","d23","d24","d31","d32","d41","d42"], "prediction"].to_numpy(),
-        T=298.15,a0=1,save_path="data/d.png")
+        T=298.15,a0=1,save_path="data/test/d.png")
     reaction_concentration_plot_complex(
         ΔGs=df.set_index("entry").loc[["e1","e2","e3","e4","e13","e14","e23","e24","e31","e32","e41","e42"], "prediction"].to_numpy(),
-        T=298.15,a0=1,save_path="data/e.png")
+        T=298.15,a0=1,save_path="data/test/e.png")
     reaction_concentration_plot_complex(
         ΔGs=df.set_index("entry").loc[["f1","f2","f3","f4","f13","f14","f23","f24","f31","f32","f41","f42"], "prediction"].to_numpy(),
-        T=298.15,a0=1,save_path="data/f.png")
+        T=298.15,a0=1,save_path="data/test/f.png")
