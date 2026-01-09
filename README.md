@@ -1,4 +1,4 @@
-# 3D-electronic_analyzer
+# 3D_electronic_analysis_for_site-selectivity
 
 ![](https://img.shields.io/badge/Python-3.10-blue?logo=python)
 ![](https://img.shields.io/badge/License-MIT-orange)
@@ -12,4 +12,4 @@ in preparation.
 
 
 ## License
-substrate-scope-metrics is available under [MIT License](https://github.com/poclab-web/substrate-scope-metrics/blob/main/LICENSE).
+3D_electronic_analysis_for_site-selectivity is available under [MIT License](https://github.com/poclab-web/3D_electronic_analysis_for_site-selectivity/LICENSE.txt).
