@@ -1,13 +1,12 @@
-import glob
+import glob,os,re
 from itertools import product
-import os
 from pathlib import Path
-import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from rdkit.Chem import PandasTools
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.patches import Rectangle, Polygon
 
 def nan_rmse(x,y):
     """
@@ -96,13 +95,6 @@ def best_parameter(path):
     return df#[["ΔΔG.expt.","regression","prediction","cv"]]
 
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-
-from pathlib import Path  # ★ 追加
 
 def plot_3d_contributions(
     df: pd.DataFrame,
@@ -475,7 +467,7 @@ def plot_3d_contributions(
 
 
 
-from pathlib import Path  # ★ 追加
+
 
 def plot_contribution_bars(
     df: pd.DataFrame,
@@ -642,12 +634,6 @@ def plot_contribution_bars(
     plt.close(fig)
 
 
-from matplotlib import pyplot as plt
-from matplotlib.patches import Rectangle, Polygon
-import numpy as np
-import pandas as pd
-
-
 def _draw_horizontal_arrow(
     ax,
     base: float,
@@ -738,8 +724,6 @@ def _draw_horizontal_arrow(
     )
     ax.add_patch(head)
 
-
-from pathlib import Path  # ★ 追加
 
 def plot_pair_stacked_contributions(
     df: pd.DataFrame,
@@ -1259,11 +1243,6 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
                 f_out.write("\n".join(new_lines) + "\n")
 
 
-from matplotlib import pyplot as plt
-import pandas as pd
-from pathlib import Path  # ← 追加
-
-
 def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
     """Plot experimental vs predicted ΔΔG‡ (parity plot style)."""
     # figure & axis range
@@ -1466,14 +1445,6 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig.savefig(save_path, dpi=500, transparent=False)
-
-
-
-import os
-from pathlib import Path
-
-import numpy as np
-import matplotlib.pyplot as plt
 
 
 def reaction_concentration_plot_complex(
