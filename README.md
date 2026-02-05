@@ -40,7 +40,7 @@ This repository is organized as follows:
 
 
 ## Original Article
-in preparation.
+Daimon Sakaguchi, Taisei Kawasaki, Mayu Itakura, Chihiro Tada, and Hiroaki Gotoh, Competition Experiment-Based Kinetic Analysis of Ketone Reductions and Prediction of Site- and Stereoselectivity, 2026. (submitted)
 
 
 ## License
