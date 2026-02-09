@@ -42,7 +42,7 @@ def plot_origin_regression_series(
 
     # default colors if not provided
     if colors is None:
-        colors = ["darkorange", "royalblue", "mediumseagreen"]
+        colors = ["darkorange", "blue", "green"]
 
     if text_positions is None:
         text_positions = {}
@@ -164,7 +164,7 @@ def plot_origin_regression_series(
             x_text,
             y_text,
             f"y = {slope:.2f}x\n$R^2$ = {r_squared:.3f}",
-            fontsize=8,
+            fontsize=9,
             color=color,
             va="center",
             ha="center",
@@ -301,8 +301,8 @@ def plot_dft_bar_dual(save_path: str) -> None:
             h = bar.get_height()
             ax2.text(
                 bar.get_x() + bar.get_width() / 2.0,
-                h + np.sign(h) * 0.32,
-                f"{h:.2f}",
+                h + np.sign(h) * 0.42,
+                f"{h:.2f}".replace("-", "−"),
                 rotation=90,
                 ha="center",
                 va="center",
@@ -314,6 +314,7 @@ def plot_dft_bar_dual(save_path: str) -> None:
     ax2.set_xticklabels([])
     ax2.set_ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt}}$ [kcal/mol]")
     ax2.set_yticks(np.arange(-3, 2, 1))
+    ax2.set_ylim(-3.5, 1.5)
     ax2.grid(True, axis="y", linestyle="--", alpha=0.5)
 
     # ===== Common legend =====
@@ -372,7 +373,7 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
     print(df.columns)
 
     # Create figure and axes
-    fig, ax = plt.subplots(figsize=(3, 3))
+    fig, ax = plt.subplots(figsize=(2.5, 2.5))
 
     # Colors for each intermediate/product
     c1 = "red"
@@ -418,7 +419,7 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
     )
 
     # Axis formatting
-    ax.set_aspect("equal", adjustable="box")
+    # ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("reaction progress [-]")
     ax.set_ylabel("concentration [-]")
     ax.set_xticks([0, 0.5, 1])
@@ -446,9 +447,9 @@ if __name__ == "__main__":
                           [2.04E+00, 2.14E+00]]),
     }
     text_pos = {
-        "Series A": (0.6, 1.5),
-        "Series B": (1.0, 0.3),
-        "Series C": (2.5, 2.4)
+        "Series A": (0.7, 1.6),
+        "Series B": (1.2, 0.3),
+        "Series C": (2.4, 2.4)
     }
     ddg = plot_origin_regression_series(series_data, "data/eda/comparison_A.png",text_positions=text_pos,)
     print(ddg)
@@ -464,9 +465,9 @@ if __name__ == "__main__":
                             [7.42E-01, 2.96E-02]])
     }
     text_pos = {
-        "Series A": (0.6, .8),
-        "Series C": (1.1, 0.3),
-        "Series B": (.7, 2.7)
+        "Series A": (0.7, .8),
+        "Series C": (1.2, 0.3),
+        "Series B": (.8, 2.7)
     }
     ddg = plot_origin_regression_series(series_data, "data/eda/comparison_B.png", text_positions=text_pos)
     print(ddg)
@@ -484,7 +485,7 @@ if __name__ == "__main__":
     text_pos = {
         "Series A": (0.8, 2.3),
         "Series C": (.7, 0.5),
-        "Series B": (1.6, .4)
+        "Series B": (1.7, .4)
     }
     ddg = plot_origin_regression_series(series_data, "data/eda/comparison_C.png", text_positions=text_pos)
     print(ddg)

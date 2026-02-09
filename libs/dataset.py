@@ -251,7 +251,7 @@ def Hammettplot(x, y, save_path: str) -> None:
     intercept_str = f"+ {intercept:.1f}" if intercept >= 0 else f"- {abs(intercept):.1f}"
 
     # Plot
-    fig, ax = plt.subplots(figsize=(3, 3), facecolor="none")
+    fig, ax = plt.subplots(figsize=(3, 2.5), facecolor="none")
     
     ax.plot(x_fit, y_fit, color="midnightblue", linewidth=1.5)
     ax.scatter(
@@ -267,12 +267,16 @@ def Hammettplot(x, y, save_path: str) -> None:
     ax.set_ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]")
     ax.set_xticks(np.arange(-0.5, 1.1, 0.5))
     ax.set_yticks(np.arange(-2, 1.1, 1))
+    ax.set_ylim(-2.5, 1.2)
     ax.grid(False)
     fig.patch.set_alpha(0.0)
 
     # Regression equation and R^2
+    slope_str = f"{slope:+.1f}".replace("-", "−")
+    intercept_str = f"{intercept:+.1f}".replace("-", "−")
+
     text_eq = (
-        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope:.1f}$\sigma$ {intercept_str}"
+        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope_str}$\sigma$ {intercept_str}"
         + "\n"
         + rf"$R^2$ = {r_value**2:.2f}"
     )
@@ -281,12 +285,12 @@ def Hammettplot(x, y, save_path: str) -> None:
         0.95,
         text_eq,
         transform=ax.transAxes,
-        fontsize=8,
+        fontsize=9,
         verticalalignment="top",
         horizontalalignment="right",
         color="midnightblue",
     )
-    ax.set_box_aspect(1)
+    # ax.set_box_aspect(1)
     #ax.set_aspect("equal", adjustable="box")
     plt.tight_layout()
     plt.savefig(out_path, dpi=500)
@@ -325,7 +329,7 @@ def angleplot(x, y, save_path: str) -> None:
     intercept_str = f"+ {intercept:.1f}" if intercept >= 0 else f"- {abs(intercept):.1f}"
 
     # Plot
-    fig, ax = plt.subplots(figsize=(3, 3), facecolor="none")
+    fig, ax = plt.subplots(figsize=(3, 2.5), facecolor="none")
     ax.plot(x_fit, y_fit, color="saddlebrown", linewidth=1.5)
     ax.scatter(
         x,
@@ -336,16 +340,20 @@ def angleplot(x, y, save_path: str) -> None:
         linewidth=1.5,
     )
 
-    ax.set_xlabel("carbonyl angle [deg.]")
+    ax.set_xlabel(r"carbonyl angle $\theta$ [°]")
     ax.set_ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]")
     ax.set_xticks(np.arange(100, 131, 10))
     ax.set_yticks(np.arange(-2, 1.1, 1))
+    ax.set_ylim(-2, 1.7)
     ax.grid(False)
     fig.patch.set_alpha(0.0)
 
     # Regression equation and R^2
+    slope_str = f"{slope:.3f}".replace("-", "−")
+    intercept_str = f"{intercept:.1f}".replace("-", "−")
+
     text_eq = (
-        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope:.3f}$\theta$ {intercept_str}"
+        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope_str}$\sigma$ {intercept_str}"
         + "\n"
         + rf"$R^2$ = {r_value**2:.2f}"
     )
@@ -354,12 +362,12 @@ def angleplot(x, y, save_path: str) -> None:
         0.95,
         text_eq,
         transform=ax.transAxes,
-        fontsize=8,
+        fontsize=9,
         verticalalignment="top",
         horizontalalignment="left",
         color="saddlebrown",
     )
-    ax.set_box_aspect(1)
+    # ax.set_box_aspect(1)
     plt.tight_layout()
     plt.savefig(out_path, dpi=500)
     plt.close(fig)

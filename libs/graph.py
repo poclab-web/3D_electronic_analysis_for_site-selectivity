@@ -224,7 +224,7 @@ def plot_3d_contributions(
     z_min_lim = zmin - margin * dz
     z_max_lim = zmax + margin * dz
 
-    fig = plt.figure(figsize=(5, 4), facecolor="white")
+    fig = plt.figure(figsize=(4, 4), facecolor="white")
     fig.patch.set_alpha(0.0)
     ax = fig.add_subplot(111, projection="3d")
 
@@ -300,7 +300,7 @@ def plot_3d_contributions(
         )
 
     # viewpoint (after limits are set)
-    ax.view_init(elev=22, azim=35)
+    ax.view_init(elev=25, azim=45)
 
     # final limits for planes
     x_min_plane, x_max_plane = ax.get_xlim3d()
@@ -437,18 +437,26 @@ def plot_3d_contributions(
 
     # axis labels with contribution fractions
     ax.set_xlabel(
-        f"electronic [kcal/mol]\n({frac_x*100:.1f}%)",
+        f"Electronic\n(contribution = {frac_x*100:.1f}%)",# [kcal/mol]
         color=color_x,
     )
     ax.set_ylabel(
-        f"electrostatic [kcal/mol]\n({frac_y*100:.1f}%)",
+        f"Electrostatic\n(contribution = {frac_y*100:.1f}%)",# [kcal/mol]
         color=color_y,
     )
     ax.set_zlabel(
-        f"orbital [kcal/mol]\n({frac_z*100:.1f}%)",
+        f"LUMO\n(contribution = {frac_z*100:.1f}%)", # [kcal/mol]
         color=color_z,
     )
-
+    ax.text(
+        -2,
+        2,
+        4,
+        "unit: [kcal/mol]",   # always show sign (+X.XX / -X.XX)
+        va="center",
+        ha="right",      # right-aligned
+        # fontsize=8,
+    )
     plt.tight_layout()
 
     # ★ create folder if needed, then save
@@ -823,14 +831,14 @@ def plot_pair_stacked_contributions(
     span = x_max - x_min
 
     # --- figure (landscape) ---
-    fig, ax = plt.subplots(figsize=(4, 1.5))
+    fig, ax = plt.subplots(figsize=(3.8, 1.4))
 
     # y positions (top to bottom)
     y_elec = 2.0
     y_es   = 1.0
     y_lumo = 0.0
     y_pos  = [y_elec, y_es, y_lumo]
-    y_labels = ["electronic", "electrostatic", "lumo"]
+    y_labels = ["Electronic", "Electrostatic", "LUMO"]
 
     # colors
     color_elec = "darkmagenta"
@@ -904,7 +912,7 @@ def plot_pair_stacked_contributions(
         ax.text(
             value_right_x,
             y,
-            f"{val:+.2f}",   # always show sign (+X.XX / -X.XX)
+            f"{val:+.2f}".replace("-", "−"),   # always show sign (+X.XX / -X.XX)
             va="center",
             ha="right",      # right-aligned
             # fontsize=8,
@@ -915,16 +923,17 @@ def plot_pair_stacked_contributions(
     annotate_value(lumo, y_lumo)
 
     # x-axis label
-    ax.set_xlabel("contribution [kcal/mol]")
+    ax.set_xlabel("Contribution [kcal/mol]")
 
     # ticks only at 0 and total (s3)
     xticks = sorted(set([0.0, s3]))
     ax.set_xticks(xticks)
-    ax.set_xticklabels([f"{x:.2f}" for x in xticks])
+    ax.set_xticklabels([f"{x:.2f}".replace("-", "−") for x in xticks])
 
     # dashed line at x=0
     ax.axvline(0.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
-
+    # line at x=total, 三分の一の高さまで
+    ax.axvline(s3, ymax=1/3, color="red", linestyle="-", linewidth=1.0, alpha=0.9)
     # remove box edges (bottom will be replaced by arrow axis)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -1267,8 +1276,8 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
         [],
         [],
         label=(
-            "regression $r^2$ = "
-            f"{r2:.2f}\n"
+            "regression: $r^2$ = "
+            f"{r2:.2f} "#\n
             r"$\mathrm{RMSE}$"
             f" = {rmse:.2f} kcal/mol"
         ),
@@ -1285,8 +1294,8 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
         [],
         [],
         label=(
-            "LOOCV $r^2$ = "
-            f"{r2:.2f}\n"
+            "      LOOCV: $r^2$ = "
+            f"{r2:.2f} "#\n
             r"$\mathrm{RMSE}$"
             f" = {rmse:.2f} kcal/mol"
         ),
@@ -1308,15 +1317,47 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
     plt.xlabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt}}$ [kcal/mol]")
     plt.ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{predict}}$ [kcal/mol]")
 
-    plt.legend(
-        loc="lower right",
-        fontsize=6,
+    # plt.legend(
+    #     loc="lower right",
+    #     fontsize=6,
+    #     ncol=1,
+    #     borderpad=0.2,
+    #     handletextpad=0.3,
+    #     frameon=True,
+    #     framealpha=0.8,
+    # )
+
+    # plt.text(
+    #     -3.6,
+    #     3.6,
+    #     "$\mathit{N}$" + f' = {len(df[df["test"] == 0])}',
+    #     fontsize=10,
+    #     verticalalignment="top",
+    # )
+
+    # plt.tight_layout()
+    # 先にレイアウトを整える
+    plt.tight_layout()
+
+    # 凡例をプロットの「外」、x軸の直下に配置 & フォント大きめ
+    leg=plt.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.35, -0.25),  # x軸の少し下
+        fontsize=8,                   # フォントサイズアップ
         ncol=1,
-        borderpad=0.2,
-        handletextpad=0.3,
+        borderpad=0.3,
+        handletextpad=0.2,
         frameon=True,
+        columnspacing=0.2,
         framealpha=0.8,
     )
+    # 凡例テキストだけ右揃え
+    for txt in leg.get_texts():
+        txt.set_ha("right")              # 横方向の位置合わせ
+        txt.set_multialignment("right")  # 複数行のときも右揃え
+
+    # 底に少し余白を追加して凡例が切れないようにする
+    plt.subplots_adjust(bottom=0.32)
 
     plt.text(
         -3.6,
@@ -1325,8 +1366,6 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
         fontsize=10,
         verticalalignment="top",
     )
-
-    plt.tight_layout()
 
     # --- create folder if needed and save ---
     png_path = Path(path.replace(".pkl", ".png"))
@@ -1362,7 +1401,7 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
         (r"^OMP .{0,} cv",        "OMP"),
     ]
 
-    fig, ax1 = plt.subplots(figsize=(4, 2.5))
+    fig, ax1 = plt.subplots(figsize=(4, 3))
     ax2 = ax1.twinx()
 
     color_r2 = "tab:red"
@@ -1430,7 +1469,7 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
     # x 軸: モデル名ラベル
     x_ticks = np.arange(1, len(models) + 1)
     ax1.set_xticks(x_ticks)
-    ax1.set_xticklabels(labels, rotation=-20, ha="left")
+    ax1.set_xticklabels(labels, rotation=-25, ha="left")
 
     # 最小 RMSE のモデルラベルだけ太字にする
     if best_idx >= 0:
@@ -1542,7 +1581,7 @@ def reaction_concentration_plot_complex(
         p_fracs = [0.0, 0.0, 0.0, 0.0]
 
     # --- プロット ---
-    fig, ax = plt.subplots(figsize=(3, 3))
+    fig, ax = plt.subplots(figsize=(3.5, 2.5))
     fig.patch.set_alpha(0.0)
 
     # 中間体の色
@@ -1611,17 +1650,51 @@ def reaction_concentration_plot_complex(
     ax.set_ylabel("concentration [-]")
     ax.set_xticks([0, 0.5, 1])
     ax.set_yticks([0, 0.5, 1])
-    ax.set_ylim(-0.02, 1.2)
+    ax.set_ylim(-0.02, 1.01)
     ax.set_xlim(-0.01, 1.01)
 
-    # 凡例
+    # # 凡例
+    # handles, legend_labels = ax.get_legend_handles_labels()
+    # leg = ax.legend(
+    #     handles[::-1],
+    #     legend_labels[::-1],
+    #     loc="upper left",
+    #     ncol=1,
+    #     fontsize=9,
+    #     borderpad=0.2,
+    #     labelspacing=0.2,
+    #     handlelength=1.0,
+    #     handletextpad=0.3,
+    #     borderaxespad=0.2,
+    #     frameon=False,
+    #     framealpha=0.8,
+    #     prop={"family": "monospace", "size": 9},
+    # )
+
+    # for text in leg.get_texts():
+    #     txt = text.get_text()
+    #     if txt.startswith(r"$\bf{1}$") or txt.startswith(r"$\bf{2}$") \
+    #        or txt.startswith(r"$\bf{3}$") or txt.startswith(r"$\bf{4}$"):
+    #         text.set_color("green")
+    #     else:
+    #         text.set_color("purple")
+    # --- 元の凡例取得 ---
     handles, legend_labels = ax.get_legend_handles_labels()
-    leg = ax.legend(
-        handles[::-1],
-        legend_labels[::-1],
+
+    # 上4つ・下4つに分割（順番を変えたいならここで[::-1]する）
+    handles_1 = handles[:4]
+    labels_1  = legend_labels[:4]
+    handles_2 = handles[4:]
+    labels_2  = legend_labels[4:]
+
+    # 枠内左上（1〜4）
+    leg1 = ax.legend(
+        handles_1,
+        labels_1,
         loc="upper left",
+        bbox_to_anchor=(1.02, 0.5),    # 軸の外にオフセット
         ncol=1,
-        fontsize=6,
+        fontsize=9,
         borderpad=0.2,
         labelspacing=0.2,
         handlelength=1.0,
@@ -1629,18 +1702,48 @@ def reaction_concentration_plot_complex(
         borderaxespad=0.2,
         frameon=False,
         framealpha=0.8,
-        prop={"family": "monospace", "size": 8},
+        title="Max point",
+        title_fontsize=9,
+        #タイトルの色を緑に
+
+        # prop={"family": "monospace", "size": 9},
     )
 
-    for text in leg.get_texts():
-        txt = text.get_text()
-        if txt.startswith(r"$\bf{1}$") or txt.startswith(r"$\bf{2}$") \
-           or txt.startswith(r"$\bf{3}$") or txt.startswith(r"$\bf{4}$"):
-            text.set_color("green")
-        else:
-            text.set_color("purple")
+    # 枠外右上（1–3, 1–4, 2–3, 2–4）
+    leg2 = ax.legend(
+        handles_2,
+        labels_2,
+        loc="upper left",              # 枠外右上に出すための基準位置
+        bbox_to_anchor=(1.0, 1.02),    # 軸の外にオフセット
+        ncol=1,
+        fontsize=9,
+        borderpad=0.2,
+        labelspacing=0.2,
+        handlelength=1.0,
+        handletextpad=0.3,
+        frameon=False,
+        framealpha=0.8,
+        title="Final point",
+        title_fontsize=9,
+        # prop={"family": "monospace", "size": 9},
+    )
 
+    # 2つ目の凡例を明示的に追加
+    ax.add_artist(leg1)
+    ax.add_artist(leg2)
+    # タイトルの色
+    leg1.get_title().set_color("green")
+    leg2.get_title().set_color("purple")
+
+    # 色付け（1〜4を緑、ダイアルコールを紫）
+    for text in leg1.get_texts():
+        text.set_color("green")
+    for text in leg2.get_texts():
+        text.set_color("purple")
     plt.tight_layout()
+    # 右に少し余白を追加して凡例が切れないようにする
+    plt.subplots_adjust(right=0.7)
+    
 
     # ---------- ensure directory exists before saving ----------
     save_path = Path(save_path)
