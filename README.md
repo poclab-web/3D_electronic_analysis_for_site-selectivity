@@ -4,7 +4,7 @@
 ![](https://img.shields.io/badge/License-MIT-orange)
 [![](https://img.shields.io/badge/DOI--brightgreen)]()
 
-Here’s an English version of the README “Contents” section based on those Python files:
+Here’s the README Contents section.
 
 ## Contents
 
