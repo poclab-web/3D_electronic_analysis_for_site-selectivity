@@ -1,1 +1,8 @@
 .DS_Store
+timer.dat
+*.pkl
+data/eda/*
+data/test/*
+data/validation/*
+libs/render_molecule.py
+definition_grid.ipynb
