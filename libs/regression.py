@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from itertools import product, combinations
 from multiprocessing import Pool
 from typing import Iterable, List, Sequence, Tuple
@@ -14,6 +15,23 @@ from sklearn.linear_model import (
     Ridge,
 )
 from sklearn.model_selection import KFold
+
+INPUT_DATA_PATH = "data/data.pkl"
+
+
+def _positive_int_from_env(name: str, default: int) -> int:
+    """Read a positive integer from environment; fallback to default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+NUM_WORKERS = _positive_int_from_env("REGRESSION_NUM_WORKERS", os.cpu_count() or 1)
 
 
 def regression(
@@ -30,24 +48,24 @@ def regression(
     ----------------
     The `method` string must begin with one of the following keywords:
 
-    - ``"Ridge alpha"``  
+    - ``"Ridge alpha"``
       Ridge regression with L2 regularization.
       * alpha: float (regularization strength)
 
-    - ``"Lasso alpha"``  
+    - ``"Lasso alpha"``
       Lasso regression with L1 regularization.
       * alpha: float (regularization strength)
 
-    - ``"ElasticNet alpha l1_ratio"``  
+    - ``"ElasticNet alpha l1_ratio"``
       Elastic Net regression with a mix of L1/L2 regularization.
       * alpha: float (overall regularization strength)
       * l1_ratio: float in [0, 1] (balance between L1 and L2)
 
-    - ``"PLS n_components"``  
+    - ``"PLS n_components"``
       Partial Least Squares regression.
       * n_components: int (number of latent components)
 
-    - ``"OMP n_components"``  
+    - ``"OMP n_components"``
       Orthogonal Matching Pursuit regression.
       * n_components: int (maximum number of non-zero coefficients)
 
@@ -240,9 +258,9 @@ def regression_(path: str, names: Sequence[str]) -> None:
     -------
     None
         Results are saved to:
-        - ``path.replace(".pkl", f"_{feature_names}_regression.pkl")``:  
+        - ``path.replace(".pkl", f"_{feature_names}_regression.pkl")``:
           pickle file with predictions, CV results and meta-data.
-        - ``path.replace(".pkl", f"_{feature_names}_regression.csv")``:  
+        - ``path.replace(".pkl", f"_{feature_names}_regression.csv")``:
           CSV file containing coefficients on the original grid.
 
     Notes
@@ -251,6 +269,8 @@ def regression_(path: str, names: Sequence[str]) -> None:
       with ``n_splits=len(y_train)``.
     - Each model's coefficients are rescaled by the standard deviation
       used in feature normalization.
+    - Multiprocessing worker count is controlled by ``NUM_WORKERS``
+      (override via ``REGRESSION_NUM_WORKERS``).
     """
     print(path)
     df = pd.read_pickle(path)
@@ -305,7 +325,7 @@ def regression_(path: str, names: Sequence[str]) -> None:
     X_train_full = np.concatenate(trains, axis=1)
     X_full = np.concatenate(train_tests, axis=1)
 
-    with Pool(24) as pool:
+    with Pool(NUM_WORKERS) as pool:
         results = list(
             pool.imap_unordered(
                 regression_parallel,
@@ -365,11 +385,4 @@ def generate_combinations(elements: Iterable[str]) -> List[List[str]]:
 
 
 if __name__ == "__main__":
-    regression_("data/data.pkl", ["electronic", "electrostatic", "lumo"])
-    # for feat, path in product(
-    #     generate_combinations(["electronic", "electrostatic", "lumo"]),
-    #     [
-    #         "data/data.pkl",
-    #     ],
-    # ):
-    #     regression_(path, feat)
+    regression_(INPUT_DATA_PATH, ["electronic", "electrostatic", "lumo"])

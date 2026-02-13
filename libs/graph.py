@@ -1,12 +1,26 @@
-import glob,os,re
+import glob
+import os
+import re
 from itertools import product
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from rdkit.Chem import PandasTools
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.patches import Rectangle, Polygon
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from rdkit.Chem import PandasTools
+
+OUTPUT_ROOT = Path(os.path.expanduser("~")) / "molecules"
+CONTRIBUTIONS_ROOT = Path(os.path.expanduser("~")) / "contributions"
+
+
+def _ensure_output_dir(save_path: str | Path) -> Path:
+    """Create the parent directory for an output path and return Path object."""
+    out_path = Path(save_path)
+    if out_path.parent and not out_path.parent.exists():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    return out_path
 
 def nan_rmse(x,y):
     """
@@ -459,10 +473,7 @@ def plot_3d_contributions(
     )
     plt.tight_layout()
 
-    # ★ create folder if needed, then save
-    save_path = Path(save_path)
-    if save_path.parent and not save_path.parent.exists():
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = _ensure_output_dir(save_path)
 
     fig.savefig(
         save_path,
@@ -484,42 +495,14 @@ def plot_contribution_bars(
     save_path: str,
     ref_inchikey: str | None = None,
 ) -> None:
-    """
-    複数 InChIKey について、electronic / electrostatic / lumo の寄与を
-    1 枚の棒グラフにまとめて描画する。
+    """Plot per-molecule electronic/electrostatic/LUMO contributions as grouped bars.
 
-    x 軸方向に
-        [ electronic ]  [ electrostatic ]  [ lumo ]
-    の 3 ブロックを配置し、
-    各ブロックの中に「分子ごとの棒（InChIKey ごと）」を並べる。
+    Three category blocks are shown on the x-axis:
+    ``electronic``, ``electrostatic``, and ``lumo``.
+    For each block, one bar is drawn per molecule in ``inchikeys``.
 
-    ref_inchikey を指定すると、各寄与は
-        寄与値(target) - 寄与値(ref_inchikey)
-    の差分として描画される。
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        下記カラムを含む DataFrame:
-            - "InChIKey"
-            - "electronic_cont"
-            - "electrostatic_cont"
-            - "lumo_cont"
-
-    inchikeys : str or list[str]
-        プロット対象とする InChIKey またはそのリスト。
-
-    save_path : str
-        出力 PNG などのファイルパス。
-
-    ref_inchikey : str or None, optional
-        差分の基準とする InChIKey。
-        None の場合は絶対値（各分子そのものの寄与）を描画。
-
-    Returns
-    -------
-    None
-        画像ファイルを save_path に保存する。
+    If ``ref_inchikey`` is provided, values are plotted as differences:
+    ``target - reference`` for each contribution type.
     """
     required_cols = [
         "InChIKey",
@@ -531,18 +514,18 @@ def plot_contribution_bars(
         if col not in df.columns:
             raise ValueError(f"DataFrame must contain column '{col}'.")
 
-    # inchikeys をリストに正規化
+    # Normalize inchikeys to a list.
     if isinstance(inchikeys, str):
         inchikey_list = [inchikeys]
     else:
         inchikey_list = list(inchikeys)
 
-    # 存在チェック
+    # Validate that requested InChIKeys exist.
     for ik in inchikey_list:
         if ik not in df["InChIKey"].values:
             raise ValueError(f"InChIKey '{ik}' was not found in DataFrame.")
 
-    # 基準分子の寄与（差分モードの場合）
+    # Reference contribution values in difference mode.
     ref_vals = None
     if ref_inchikey is not None:
         if ref_inchikey not in df["InChIKey"].values:
@@ -559,7 +542,7 @@ def plot_contribution_bars(
             dtype=float,
         )
 
-    # 寄与値を InChIKey 順に並べた配列 (N_mol, 3)
+    # Contribution matrix in InChIKey order, shape: (n_molecules, 3).
     contributions = []
     for ik in inchikey_list:
         row = df[df["InChIKey"] == ik].iloc[0]
@@ -572,7 +555,7 @@ def plot_contribution_bars(
             dtype=float,
         )
         if ref_vals is not None:
-            vals = vals - ref_vals  # 差分
+            vals = vals - ref_vals
         contributions.append(vals)
     contributions = np.vstack(contributions)  # shape: (N, 3)
 
@@ -580,20 +563,20 @@ def plot_contribution_bars(
     categories = ["electronic", "electrostatic", "lumo"]
     n_cat = len(categories)
 
-    # x 軸上で [0,1,2] が 3 ブロックの中心
+    # Centers of the three category blocks on the x-axis.
     x_base = np.arange(n_cat, dtype=float)
 
-    # 各ブロック内で InChIKey ごとの棒を横にずらす
-    total_width = 0.8  # ブロックの幅
+    # Offset one bar per InChIKey within each category block.
+    total_width = 0.8
     bar_width = total_width / max(n_mol, 1)
 
-    # 図の作成
+    # Create figure.
     fig, ax = plt.subplots(figsize=(5, 3))
 
     for i, ik in enumerate(labels):
-        # i 番目の分子の寄与 (3 要素: ele, es, lumo)
+        # Contributions for the i-th molecule: electronic, electrostatic, lumo.
         vals = contributions[i, :]
-        # 3 つのブロック内での x 位置
+        # X positions inside the three category blocks.
         x_pos = x_base + (i - (n_mol - 1) / 2) * bar_width
 
         ax.bar(
@@ -604,14 +587,14 @@ def plot_contribution_bars(
             alpha=0.8,
         )
 
-    # 0 ライン
+    # Zero baseline.
     ax.axhline(0, color="black", linewidth=1.0)
 
-    # x 軸の目盛り（ブロック中央）
+    # Tick labels at category block centers.
     ax.set_xticks(x_base)
     ax.set_xticklabels(categories)
 
-    # ラベル
+    # Y-axis label depends on absolute/difference mode.
     if ref_vals is None:
         ax.set_ylabel("contribution [kcal/mol]")
         title = "Contributions"
@@ -625,18 +608,15 @@ def plot_contribution_bars(
     # ax.set_xlabel("contribution type")
     # ax.set_title(title)
 
-    # 凡例（InChIKey ごと）
+    # Legend for molecules.
     ax.legend(frameon=False, fontsize=8, ncol=1)
 
-    # x 方向に少し余裕
+    # Add small x-margin.
     ax.margins(x=0.1)
 
     fig.tight_layout()
 
-    # ★ save_path のフォルダを自動作成してから保存
-    save_path = Path(save_path)
-    if save_path.parent and not save_path.parent.exists():
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = _ensure_output_dir(save_path)
 
     fig.savefig(save_path, dpi=400)
     plt.close(fig)
@@ -932,7 +912,7 @@ def plot_pair_stacked_contributions(
 
     # dashed line at x=0
     ax.axvline(0.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
-    # line at x=total, 三分の一の高さまで
+    # Vertical line at total contribution, up to one-third of axis height.
     ax.axvline(s3, ymax=1/3, color="red", linestyle="-", linewidth=1.0, alpha=0.9)
     # remove box edges (bottom will be replaced by arrow axis)
     ax.spines["top"].set_visible(False)
@@ -956,16 +936,13 @@ def plot_pair_stacked_contributions(
 
     fig.tight_layout()
 
-    # ★ ここでフォルダを自動作成してから保存 ★
-    save_path = Path(save_path)
-    if save_path.parent and not save_path.parent.exists():
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = _ensure_output_dir(save_path)
 
     fig.savefig(save_path, dpi=400)
     plt.close(fig)
 
 
-def make_cube(df,path):
+def make_cube(df, path):
     grid = np.array([re.findall(r'[+-]?\d+', col) for col in df.filter(like='electronic_cont ').columns]).astype(int)
     min=np.min(grid,axis=0).astype(int)
     print("min",min)
@@ -985,11 +962,10 @@ def make_cube(df,path):
     df=df.set_index("InChIKey").reindex(columns=columns, fill_value=0)
     n=0.52917721092*2
     # print(df.columns)
-    home = Path.home()
-    out_path = home / "contributions"
+    out_path = CONTRIBUTIONS_ROOT
     min=' '.join(map(str, (min+np.array([0.5,0.5,-0.5]))*n))
     for inchikey,expt,temp,value in zip(df.index,df["ΔΔG.expt."],df["temperature"],df.iloc[:,2:].values):
-        dt=glob.glob(str(home)+ f"/molecules/{inchikey}/Dt*.cube")[0]
+        dt = glob.glob(str(OUTPUT_ROOT / inchikey / "Dt*.cube"))[0]
         # dt=f'/Volumes/SSD-PSM960U3-UW/CoMFA_calc/{inchikey}/Dt0.cube'
         with open(dt, 'r', encoding='UTF-8') as f:
             f.readline()
@@ -1018,64 +994,26 @@ def make_cube(df,path):
 
 
 def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
-    """
-    electronic_cont / electrostatic_cont / lumo_cont の符号に応じて
-    X または Xe の原子を追加した Dt / ESP / LUMO の cube ファイルを生成する。
+    """Write cube files with sign marker atoms for contribution grids.
 
-    - electronic_cont > 0 : X (原子番号 0, ダミー原子)
-    - electronic_cont < 0 : Xe (原子番号 54)
-      （electrostatic_cont, lumo_cont も同様）
+    Marker rule:
+    - Positive value -> atomic number 0 (X, dummy atom)
+    - Negative value -> atomic number 54 (Xe)
 
-    生成されるファイル:
-        contributions/<InChIKey>/electronic.cube   (Dt*.cube が元)
-        contributions/<InChIKey>/electrostatic.cube (ESP*.cube が元)
-        contributions/<InChIKey>/lumo.cube        (LUMO*.cube が元)
-
-    パラメータ
-    ----------
-    df : pandas.DataFrame
-        各行が 1 分子（InChIKey でユニーク）に対応する DataFrame。
-        以下のカラムを含んでいる必要がある:
-
-        - "InChIKey"                : 分子 ID（行ごとに一意）
-        - "ΔΔG.expt."               : 実験値（ログ出力などに使うだけ）
-        - "temperature"             : 温度（同上）
-        - "electronic_cont i j k"   : 電子寄与の格子値（任意個）
-        - "electrostatic_cont i j k": 静電寄与の格子値（任意個）
-        - "lumo_cont i j k"         : 軌道寄与の格子値（任意個）
-
-        electronic_cont / electrostatic_cont / lumo_cont の
-        「 i j k 」は、元の Dt / ESP / LUMO cube の格子インデックスに対応する整数。
-
-    out_root : str or pathlib.Path
-        出力のルートディレクトリ。通常は `Path.home() / "contributions"` など。
-        実際の出力は out_root / InChIKey / {electronic,electrostatic,lumo}.cube
-
-    戻り値
-    -------
-    None
-        cube ファイルをディスクに書き出すだけで、値は返さない。
-
-    注意
-    ----
-    - テンプレートとして、以下のパターンで cube を探す:
-        ~/molecules/<InChIKey>/Dt*.cube
-        ~/molecules/<InChIKey>/ESP*.cube
-        ~/molecules/<InChIKey>/LUMO*.cube
-
-      必要に応じてパターンは書き換えてください。
-    - volumetric データは元の Dt / ESP / LUMO cube からそのままコピーし、
-      原子行だけを追加します（グリッドは一切変更しません）。
+    The function copies volumetric data from template cubes under
+    ``OUTPUT_ROOT / <InChIKey>`` (Dt/ESP/LUMO) and appends marker atom lines
+    computed from contribution columns:
+    ``electronic_cont i j k``, ``electrostatic_cont i j k``, ``lumo_cont i j k``.
     """
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    # --- 各 cont カラム名と、そのグリッドインデックス (i,j,k) のペアを取得 ---
+    # Collect contribution columns and corresponding grid indices (i, j, k).
     def extract_cont_columns(prefix: str):
         cols = [c for c in df.columns if c.startswith(prefix + " ")]
         if not cols:
             raise ValueError(f"No columns starting with '{prefix} ' were found in df.")
-        # "prefix i j k" から (i,j,k) を取り出す
+        # Parse (i, j, k) from column names: "prefix i j k".
         grid_idx = np.array(
             [list(map(int, re.findall(r"[+-]?\d+", c))) for c in cols],
             dtype=int,
@@ -1086,14 +1024,14 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
     es_cols, _ = extract_cont_columns("electrostatic_cont")
     lu_cols, _ = extract_cont_columns("lumo_cont")
 
-    # グリッドインデックス (i,j,k) は 3 つの cont で共通だと仮定
+    # Assume grid indices are shared across electronic/electrostatic/lumo columns.
     if not (len(ele_cols) == len(es_cols) == len(lu_cols)):
         raise ValueError(
             "The numbers of electronic_cont / electrostatic_cont / lumo_cont "
             "columns do not match."
         )
 
-    # --- grid index -> 3D 座標への変換関数（cube の軸ベクトル & 原点を使う） ---
+    # Convert grid indices to Cartesian coordinates using cube origin/axes.
     def make_marker_atoms(
         grid_indices: np.ndarray,
         values: np.ndarray,
@@ -1105,12 +1043,7 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
         neg_Z: int = 54,  # Xe
         eps: float = 1e-12,
     ) -> list[str]:
-        """
-        cont 値 `values` の符号に応じて X / Xe の原子行を作る。
-
-        座標は cube の原点 origin と軸ベクトル ax, ay, az から
-        「セル中心」を (i+0.5, j+0.5, k+0.5) で求める。
-        """
+        """Build X/Xe atom lines according to the sign of contribution values."""
         atoms: list[str] = []
         for (ix, iy, iz), v in zip(grid_indices, values):
             if np.isnan(v) or abs(v) <= eps:
@@ -1120,7 +1053,7 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
             else:
                 Z = neg_Z   # Xe
 
-            # セル中心の座標 (origin + (i+0.5)*ax + (j+0.5)*ay + (k+0.5)*az)
+            # Cell-center position (currently fixed at origin by existing logic).
             r = (
                 origin
                 # + (ix + 0.5) * ax
@@ -1129,27 +1062,25 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
             )
             x, y, z = r.tolist()
 
-            # Gaussian cube の原子行形式:
+            # Gaussian cube atom line format:
             #   atomic_number  charge  x  y  z
-            # charge はここでは原子番号と同じにしておく
+            # Charge is set equal to atomic number for these marker atoms.
             line = f"{Z:5d}{float(Z):12.6f}{x:12.6f}{y:12.6f}{z:12.6f}"
             atoms.append(line)
 
         return atoms
 
-    home = Path.home()
-
-    # InChIKey を index にしてループ
+    # Iterate rows indexed by InChIKey.
     df_idx = df.set_index("InChIKey")
 
     for inchikey, row in df_idx.iterrows():
-        # cont 値を取り出し
+        # Extract contribution values.
         ele_vals = row[ele_cols].to_numpy(dtype=float)
         es_vals  = row[es_cols].to_numpy(dtype=float)
         lu_vals  = row[lu_cols].to_numpy(dtype=float)
 
-        # テンプレ cube を探す
-        base_dir = home / "molecules" / inchikey
+        # Find template cubes.
+        base_dir = OUTPUT_ROOT / inchikey
         dt_candidates  = glob.glob(str(base_dir / "Dt*.cube"))
         esp_candidates = glob.glob(str(base_dir / "ESP*.cube"))
         lumo_candidates = glob.glob(str(base_dir / "LUMO*.cube"))
@@ -1162,28 +1093,28 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
 
         for kind, candidates in cube_map.items():
             if not candidates:
-                # 見つからなければスキップ（必要なら warning を print してもよい）
+                # Skip if template cube is missing.
                 continue
 
             template_path = Path(candidates[0])
 
-            # cube を丸ごと読む
+            # Read the entire template cube.
             with open(template_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
 
             if len(lines) < 7:
                 raise ValueError(f"Cube file seems too short: {template_path}")
 
-            # ヘッダ部をパース
+            # Parse cube header.
             title_line   = lines[0].rstrip("\n")
             comment_line = lines[1].rstrip("\n")
 
-            # 3 行目: natoms, origin
+            # Line 3: natoms and origin.
             natoms_tokens = lines[2].split()
             natoms = int(natoms_tokens[0])
             origin = np.array(list(map(float, natoms_tokens[1:4])), dtype=float)
 
-            # 4–6 行目: グリッド情報
+            # Lines 4-6: grid definitions.
             gx = lines[3].split()
             gy = lines[4].split()
             gz = lines[5].split()
@@ -1196,13 +1127,13 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
             ay = np.array(list(map(float, gy[1:4])), dtype=float)
             az = np.array(list(map(float, gz[1:4])), dtype=float)
 
-            # 原子行
+            # Atom block.
             atom_lines = [line.rstrip("\n") for line in lines[6 : 6 + natoms]]
 
-            # volumetric データはそのままコピー
+            # Keep volumetric data unchanged.
             data_lines = [line.rstrip("\n") for line in lines[6 + natoms :]]
 
-            # 対応する cont 値を選ぶ
+            # Select the matching contribution vector.
             if kind == "electronic":
                 vals = ele_vals
             elif kind == "electrostatic":
@@ -1210,9 +1141,9 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
             elif kind == "lumo":
                 vals = lu_vals
             else:
-                continue  # 念のため
+                continue
 
-            # cont の符号に応じた X / Xe マーカー原子を作成
+            # Build X/Xe marker atoms from contribution signs.
             marker_atoms = make_marker_atoms(
                 grid_indices=grid_idx,
                 values=vals,
@@ -1224,14 +1155,14 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
                 neg_Z=54,  # Xe
             )
 
-            # 原子数を更新
+            # Update atom count in cube header.
             natoms_new = natoms + len(marker_atoms)
             natoms_line_new = (
                 f"{natoms_new:5d}"
                 f"{origin[0]:12.6f}{origin[1]:12.6f}{origin[2]:12.6f}"
             )
 
-            # 新しい cube を組み立て
+            # Assemble updated cube content.
             new_lines: list[str] = []
             new_lines.append(title_line)
             new_lines.append(comment_line)
@@ -1243,7 +1174,7 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
             new_lines.extend(marker_atoms)
             new_lines.extend(data_lines)
 
-            # 出力先
+            # Output path.
             out_dir = out_root / inchikey
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / f"{kind}.cube"
@@ -1336,14 +1267,14 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
     # )
 
     # plt.tight_layout()
-    # 先にレイアウトを整える
+    # Apply layout first.
     plt.tight_layout()
 
-    # 凡例をプロットの「外」、x軸の直下に配置 & フォント大きめ
+    # Place legend outside, below x-axis.
     leg=plt.legend(
         loc="upper center",
-        bbox_to_anchor=(0.35, -0.25),  # x軸の少し下
-        fontsize=8,                   # フォントサイズアップ
+        bbox_to_anchor=(0.35, -0.25),
+        fontsize=8,
         ncol=1,
         borderpad=0.3,
         handletextpad=0.2,
@@ -1351,12 +1282,12 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
         columnspacing=0.2,
         framealpha=0.8,
     )
-    # 凡例テキストだけ右揃え
+    # Right-align legend text.
     for txt in leg.get_texts():
-        txt.set_ha("right")              # 横方向の位置合わせ
-        txt.set_multialignment("right")  # 複数行のときも右揃え
+        txt.set_ha("right")
+        txt.set_multialignment("right")
 
-    # 底に少し余白を追加して凡例が切れないようにする
+    # Add bottom margin so the legend is not clipped.
     plt.subplots_adjust(bottom=0.32)
 
     plt.text(
@@ -1367,9 +1298,7 @@ def plot_expt_vs_pred(df: pd.DataFrame, path: str) -> None:
         verticalalignment="top",
     )
 
-    # --- create folder if needed and save ---
-    png_path = Path(path.replace(".pkl", ".png"))
-    png_path.parent.mkdir(parents=True, exist_ok=True)
+    png_path = _ensure_output_dir(path.replace(".pkl", ".png"))
     plt.savefig(png_path, dpi=500, transparent=True)
 
     # df = df.reindex(df["error"].abs().sort_values(ascending=False).index)
@@ -1407,14 +1336,14 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
     color_r2 = "tab:red"
     color_rmse = "tab:blue"
 
-    handles = []  # for custom legend (もし後で使うなら)
-    labels = []   # x 軸用のモデル名
+    handles = []  # Reserved for optional custom legend usage.
+    labels = []  # Model labels for x-axis.
 
     best_rmse = np.inf
     best_idx = -1
 
     for model_idx, (regex, label) in enumerate(models):
-        x_pos = model_idx + 1  # 1,2,3,... に配置
+        x_pos = model_idx + 1  # Place at 1, 2, 3, ...
         print("x_pos:", x_pos)
 
         r2_array = np.array([
@@ -1428,9 +1357,9 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
         rmse_val = float(rmse_array[0])
         if rmse_val < best_rmse:
             best_rmse = rmse_val
-            best_idx = model_idx  # 0 始まり
+            best_idx = model_idx  # Zero-based index.
 
-        # RMSE: bar (右軸)
+        # RMSE bars on right y-axis.
         b = ax2.bar(
             x_pos,
             rmse_array,
@@ -1440,7 +1369,7 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
             label=label + " RMSE",
         )
 
-        # R²: scatter (左軸)
+        # R^2 points on left y-axis.
         s = ax1.scatter(
             x_pos,
             r2_array,
@@ -1454,24 +1383,24 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
         handles.append(b)
         labels.append(label)
 
-    # 左 y 軸: R²
+    # Left y-axis: R^2.
     ax1.set_ylabel(r"$r^2_{\mathrm{LOOCV}}$       ", loc="top", color=color_r2)
     ax1.set_yticks(np.arange(0, 1.1, 0.5))
     ax1.tick_params(axis="y", colors=color_r2)
     ax1.set_ylim(-0.5, 1)
 
-    # 右 y 軸: RMSE
+    # Right y-axis: RMSE.
     ax2.set_ylabel("RMSE" + r"$_{\mathrm{LOOCV}}$" + " [kcal/mol]", loc="bottom", color=color_rmse)
     ax2.set_ylim(0, 1.5)
     ax2.set_yticks(np.arange(0, 1.1, 0.5))
     ax2.tick_params(axis="y", colors=color_rmse)
 
-    # x 軸: モデル名ラベル
+    # X-axis: model labels.
     x_ticks = np.arange(1, len(models) + 1)
     ax1.set_xticks(x_ticks)
     ax1.set_xticklabels(labels, rotation=-25, ha="left")
 
-    # 最小 RMSE のモデルラベルだけ太字にする
+    # Bold only the model with minimum RMSE.
     if best_idx >= 0:
         for i, tick in enumerate(ax1.get_xticklabels()):
             if i == best_idx:
@@ -1479,30 +1408,31 @@ def plot_loocv_metrics(csv_path: str, save_path: str) -> None:
 
     fig.tight_layout()
 
-    # 保存先フォルダを作成
-    save_path = Path(save_path)
-    save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = _ensure_output_dir(save_path)
 
     fig.savefig(save_path, dpi=500, transparent=False)
 
 
 def reaction_concentration_plot_complex(
-    ΔGs, T=298.15, a0=100,
-    save_path="simulation_complex.png"
+    ΔGs,
+    T=298.15,
+    a0=100,
+    save_path="simulation_complex.png",
 ):
-    # 定数
+    # Physical constants.
     kB = 1.380649e-23  # [J/K]
     h  = 6.62607015e-34  # [J·s]
     R  = 1.987e-3        # [kcal/(mol·K)]
     """
-    複雑な分岐反応の濃度時間変化をプロットする。
+    Plot concentration profiles for a branched reaction network.
 
-    ΔGs: list of 12 floats
-        ΔG1, ΔG2, ΔG3, ΔG4（A→Pi）[kcal/mol]
-        ΔG13p, ΔG14p, ΔG23p, ΔG24p, ΔG31p, ΔG32p, ΔG41p, ΔG42p（Pi→Pij′）[kcal/mol]
+    ΔGs : list[float] of length 12
+        Activation free energies [kcal/mol]:
+        - ΔG1..ΔG4 for A -> Pi
+        - ΔG13p, ΔG14p, ΔG23p, ΔG24p, ΔG31p, ΔG32p, ΔG41p, ΔG42p for Pi -> Pij'
     """
 
-    # --- Eyring式 ---
+    # Eyring equation.
     def k(ΔG):
         return (kB * T / h) * np.exp(-ΔG / (R * T))
 
@@ -1512,22 +1442,22 @@ def reaction_concentration_plot_complex(
         k31p, k32p, k41p, k42p
     ) = [k(ΔG) for ΔG in ΔGs]
 
-    # 中間体分解速度
+    # Intermediate decomposition rates.
     k1p_sum = k13p + k14p
     k2p_sum = k23p + k24p
     k3p_sum = k31p + k32p
     k4p_sum = k41p + k42p
     ka = k1 + k2 + k3 + k4
 
-    # --- 時間軸 ---
+    # Time grid.
     t = np.logspace(
         -10, 10, 1000, base=10
     ) / np.max([k1, k2, k3, k4, k13p, k14p, k23p, k24p, k31p, k32p, k41p, k42p])
 
-    # A の濃度
+    # Concentration of A.
     a = a0 * np.exp(-ka * t)
 
-    # --- 中間体 Pi ---
+    # Intermediate concentrations Pi.
     def p_i(k_i, k_ip_sum):
         return (k_i * a0 / (k_ip_sum - ka)) * (np.exp(-ka * t) - np.exp(-k_ip_sum * t))
 
@@ -1538,17 +1468,17 @@ def reaction_concentration_plot_complex(
 
     p_intermediate_total = p1 + p2 + p3 + p4
 
-    # 中間体合計が最大の時刻
+    # Time where total intermediate concentration is maximal.
     t_max_idx = np.argmax(p_intermediate_total)
     t_max = t[t_max_idx]
 
-    # --- 生成物 Pij′ ---
+    # Product concentrations Pij'.
     def pij_total(k_i, k_ijp, k_ip_sum):
         term1 = (1 - np.exp(-ka * t)) / ka
         term2 = (1 - np.exp(-k_ip_sum * t)) / k_ip_sum
         return (k_i * k_ijp * a0 / (k_ip_sum - ka)) * (term1 - term2)
 
-    # 対応関係:
+    # Mapping:
     #  p13 ↔ (1,3), p14 ↔ (1,4), p23 ↔ (2,3), p24 ↔ (2,4)
     p13 = pij_total(k1, k13p, k1p_sum) + pij_total(k3, k31p, k3p_sum)
     p14 = pij_total(k1, k14p, k1p_sum) + pij_total(k4, k41p, k4p_sum)
@@ -1557,10 +1487,10 @@ def reaction_concentration_plot_complex(
 
     pp_total = p13 + p14 + p23 + p24
 
-    # --- 反応進行度 ---
+    # Reaction progress.
     progress = p1 / 2 + p2 / 2 + p3 / 2 + p4 / 2 + pp_total
 
-    # --- t_max における p1〜p4 を print ---
+    # Report p1-p4 values at t_max.
     print("At t_max (intermediate total maximum):")
     print(f"  t_max = {t_max:.3e}")
     print(f"  p1(t_max) = {p1[t_max_idx]:.6f}")
@@ -1568,7 +1498,7 @@ def reaction_concentration_plot_complex(
     print(f"  p3(t_max) = {p3[t_max_idx]:.6f}")
     print(f"  p4(t_max) = {p4[t_max_idx]:.6f}")
 
-    # t_max における割合（％）
+    # Percent values at t_max.
     total_p_tmax = p_intermediate_total[t_max_idx]
     if total_p_tmax > 0:
         p_fracs = [
@@ -1580,23 +1510,23 @@ def reaction_concentration_plot_complex(
     else:
         p_fracs = [0.0, 0.0, 0.0, 0.0]
 
-    # --- プロット ---
+    # Plot.
     fig, ax = plt.subplots(figsize=(3.5, 2.5))
     fig.patch.set_alpha(0.0)
 
-    # 中間体の色
+    # Colors for intermediates.
     c1 = "red"
     c2 = "tab:pink"
     c3 = "blue"
     c4 = "tab:blue"
     base_colors = [c1, c2, c3, c4]
 
-    # 生成物: 対応する 2色を「facecolor×edgecolor+ハッチ」で表現
+    # Products: two-color style via facecolor + edgecolor + hatch.
     product_facecolors = [c1, c1, c2, c2]      # face
     product_edgecolors = [c3, c4, c3, c4]      # edge
-    hatches = ["///", "\\\\", "xx", ".."]      # 2色感を出す模様
+    hatches = ["///", "\\\\", "xx", ".."]  # Hatch styles for visual separation.
 
-    # --- 凡例ラベル ---
+    # Legend labels.
     labels = [
         rf"$\bf{{1}}$ {p_fracs[0]:4.1f}%",
         rf"$\bf{{2}}$ {p_fracs[1]:4.1f}%",
@@ -1608,7 +1538,7 @@ def reaction_concentration_plot_complex(
         rf"$\bf{{2-4}}$ {p24[-1]*100:4.1f}%",
     ]
 
-    # stackplot: 下から p1, p2, p3, p4, p13, p14, p23, p24
+    # Stackplot order (bottom -> top): p1, p2, p3, p4, p13, p14, p23, p24.
     all_colors = base_colors + product_facecolors
 
     polys = ax.stackplot(
@@ -1618,27 +1548,27 @@ def reaction_concentration_plot_complex(
         colors=all_colors,
         labels=labels,
     )
-    # 中間体 p1〜p4: 半透明
+    # p1-p4 shown with moderate transparency.
     for poly in polys[:4]:
         poly.set_alpha(0.6)
 
-    # 生成物 p13〜p24: facecolor は母体に合わせ、edgecolor とハッチで2色表現
+    # p13-p24 use matching facecolor and differentiated edge/hatch styles.
     for i, poly in enumerate(polys[4:]):
         poly.set_alpha(0.5)
         poly.set_hatch(hatches[i])
         poly.set_edgecolor(product_edgecolors[i])
         poly.set_linewidth(0.6)
 
-    # 中間体合計線
+    # Intermediate total line.
     ax.plot(progress, p_intermediate_total, color="gray", linestyle="-")
     x0 = progress[t_max_idx]
     y0 = p_intermediate_total[t_max_idx]
 
-    # y = 0 まで垂線
+    # Vertical guide lines.
     ax.plot([x0, x0], [0, y0], color="green", linestyle="--", linewidth=1.0)
     ax.plot([1, 1], [0, 1], color="purple", linestyle="--", linewidth=1.0)
 
-    # dialcohol 合計線
+    # Total dialcohol line.
     ax.plot(
         progress,
         p_intermediate_total + pp_total,
@@ -1653,7 +1583,7 @@ def reaction_concentration_plot_complex(
     ax.set_ylim(-0.02, 1.01)
     ax.set_xlim(-0.01, 1.01)
 
-    # # 凡例
+    # # Legend
     # handles, legend_labels = ax.get_legend_handles_labels()
     # leg = ax.legend(
     #     handles[::-1],
@@ -1678,21 +1608,21 @@ def reaction_concentration_plot_complex(
     #         text.set_color("green")
     #     else:
     #         text.set_color("purple")
-    # --- 元の凡例取得 ---
+    # Base legend handles/labels.
     handles, legend_labels = ax.get_legend_handles_labels()
 
-    # 上4つ・下4つに分割（順番を変えたいならここで[::-1]する）
+    # Split legend entries: top four and bottom four.
     handles_1 = handles[:4]
     labels_1  = legend_labels[:4]
     handles_2 = handles[4:]
     labels_2  = legend_labels[4:]
 
-    # 枠内左上（1〜4）
+    # First legend (1-4), placed outside left-top.
     leg1 = ax.legend(
         handles_1,
         labels_1,
         loc="upper left",
-        bbox_to_anchor=(1.02, 0.5),    # 軸の外にオフセット
+        bbox_to_anchor=(1.02, 0.5),  # Offset outside axes.
         ncol=1,
         fontsize=9,
         borderpad=0.2,
@@ -1704,17 +1634,15 @@ def reaction_concentration_plot_complex(
         framealpha=0.8,
         title="Max point",
         title_fontsize=9,
-        #タイトルの色を緑に
-
         # prop={"family": "monospace", "size": 9},
     )
 
-    # 枠外右上（1–3, 1–4, 2–3, 2–4）
+    # Second legend (1-3/1-4/2-3/2-4), placed outside upper-right.
     leg2 = ax.legend(
         handles_2,
         labels_2,
-        loc="upper left",              # 枠外右上に出すための基準位置
-        bbox_to_anchor=(1.0, 1.02),    # 軸の外にオフセット
+        loc="upper left",
+        bbox_to_anchor=(1.0, 1.02),  # Offset outside axes.
         ncol=1,
         fontsize=9,
         borderpad=0.2,
@@ -1728,27 +1656,24 @@ def reaction_concentration_plot_complex(
         # prop={"family": "monospace", "size": 9},
     )
 
-    # 2つ目の凡例を明示的に追加
+    # Add legends explicitly.
     ax.add_artist(leg1)
     ax.add_artist(leg2)
-    # タイトルの色
+    # Legend title colors.
     leg1.get_title().set_color("green")
     leg2.get_title().set_color("purple")
 
-    # 色付け（1〜4を緑、ダイアルコールを紫）
+    # Legend text colors.
     for text in leg1.get_texts():
         text.set_color("green")
     for text in leg2.get_texts():
         text.set_color("purple")
     plt.tight_layout()
-    # 右に少し余白を追加して凡例が切れないようにする
+    # Add right margin so legends are not clipped.
     plt.subplots_adjust(right=0.7)
     
 
-    # ---------- ensure directory exists before saving ----------
-    save_path = Path(save_path)
-    if save_path.parent and not save_path.parent.exists():
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = _ensure_output_dir(save_path)
 
     plt.savefig(save_path, dpi=500, transparent=False)
 
@@ -1764,8 +1689,7 @@ if __name__ == '__main__':
     plot_pair_stacked_contributions(df, target_inchikey="YKFKEYKJGVSEIX-KWYDOPHBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/YKFKEYKJGVSEIX-KWYDOPHBSA-N.png")
     plot_loocv_metrics("data/data_electronic_electrostatic_lumo_results.csv", "data/validation/loocv_metrics.png")
     
-    home = Path.home()
-    out_path = home / "contributions"
+    out_path = CONTRIBUTIONS_ROOT
     make_cube(df,out_path)
     # make_cube_with_sign_markers(df,out_path)
     plot_expt_vs_pred(df,"data/validation/regression.png")

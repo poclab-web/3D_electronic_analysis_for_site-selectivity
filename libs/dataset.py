@@ -36,7 +36,7 @@ def common(from_file_path: str) -> pd.DataFrame:
         - 'InChIKey' : InChIKey of the hydrogen-saturated molecule
     """
     # Load
-    df = pd.read_excel(from_file_path, skiprows=1)#.iloc[:150]
+    df = pd.read_excel(from_file_path, skiprows=1)  # .iloc[:150]
 
     # Generate RDKit Mol objects from SMILES
     df["mol"] = df["SMILES"].apply(Chem.MolFromSmiles)
@@ -74,7 +74,7 @@ def output(df: pd.DataFrame, to_file_path: str) -> None:
     print(len(df))
     # Select and sanitize columns for export
     df = df[
-        ["entry","name", "SMILES", "InChIKey", "temperature", "ΔΔG.expt.", "test"]
+        ["entry", "name", "SMILES", "InChIKey", "temperature", "ΔΔG.expt.", "test"]
     ].replace([np.nan, None, np.inf, -np.inf], "N/A")
 
     # Add RDKit molecule column (ROMol) from SMILES
@@ -128,7 +128,7 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
         for i, analogue in enumerate(analogue_classes)
     }
 
-    used_y = []  # 実際に使った y 座標を記録
+    used_y = []  # Record y coordinates actually used
 
     for analogue in analogue_classes:
         subset = df[df["analogue"] == analogue]
@@ -160,7 +160,7 @@ def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
             label=analogue,
         )
 
-    # y 範囲に上側の余白を追加
+    # Add upper padding to the y-axis range
     if used_y:
         y_min = min(used_y)
         y_max = max(used_y)
@@ -252,7 +252,7 @@ def Hammettplot(x, y, save_path: str) -> None:
 
     # Plot
     fig, ax = plt.subplots(figsize=(3, 2.5), facecolor="none")
-    
+
     ax.plot(x_fit, y_fit, color="midnightblue", linewidth=1.5)
     ax.scatter(
         x,
@@ -291,7 +291,7 @@ def Hammettplot(x, y, save_path: str) -> None:
         color="midnightblue",
     )
     # ax.set_box_aspect(1)
-    #ax.set_aspect("equal", adjustable="box")
+    # ax.set_aspect("equal", adjustable="box")
     plt.tight_layout()
     plt.savefig(out_path, dpi=500)
     plt.close(fig)

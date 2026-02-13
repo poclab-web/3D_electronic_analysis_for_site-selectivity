@@ -12,13 +12,30 @@ from itertools import product
 from multiprocessing import Pool
 from pathlib import Path
 import glob
+import os
 
 import numpy as np
 import pandas as pd
 import cclib
 
 
-def calc_grid__(log: str, T: float):
+def _positive_int_from_env(name: str, default: int) -> int:
+    """Read a positive integer from environment; fallback to default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+OUTPUT_ROOT = os.path.join(os.path.expanduser("~"), "molecules")
+NUM_WORKERS = _positive_int_from_env("GRID_NUM_WORKERS", os.cpu_count() or 1)
+
+
+def calc_grid__(log: str, T: float) -> tuple[pd.DataFrame, float]:
     """Extract grid data (density, ESP, LUMO) and a thermodynamic weight from a single log/cube set.
 
     This function reads a Gaussian log file with thermochemical data (via cclib) and
@@ -334,7 +351,8 @@ def process_row(row: pd.Series) -> pd.Series:
     ----------
     row : pandas.Series
         A row from the input Excel DataFrame. It must contain:
-        - "InChIKey": used to locate the molecule directory under ~/molecules/<InChIKey>
+        - "InChIKey": used to locate the molecule directory under
+          OUTPUT_ROOT/<InChIKey>
         - "temperature": temperature [K] for this molecule.
 
     Returns
@@ -344,8 +362,7 @@ def process_row(row: pd.Series) -> pd.Series:
         this molecule. The index is a set of feature names; the single row corresponds
         to one molecule.
     """
-    home = Path.home()
-    target_dir = home / "molecules" / row["InChIKey"]
+    target_dir = Path(OUTPUT_ROOT) / row["InChIKey"]
     return calc_grid(str(target_dir), row["temperature"], folded=1)
 
 
@@ -355,7 +372,7 @@ def calc_grid_(path: str) -> None:
     This function:
     1. Reads molecular data from an Excel file.
     2. For each row (molecule), locates the corresponding directory under
-       `~/molecules/<InChIKey>` and computes grid descriptors via :func:`calc_grid`.
+       `OUTPUT_ROOT/<InChIKey>` and computes grid descriptors via :func:`calc_grid`.
     3. Combines the grid descriptors with the original DataFrame.
     4. Saves the result as:
         - A pickle file with the same basename (``.pkl``)
@@ -381,8 +398,8 @@ def calc_grid_(path: str) -> None:
     print(f"START PARSING {path}")
     df = pd.read_excel(path)
 
-    # Multiprocessing over rows
-    with Pool(24) as pool:
+    # Multiprocessing over rows (worker count is configurable via NUM_WORKERS).
+    with Pool(NUM_WORKERS) as pool:
         results = pool.map(process_row, [row for _, row in df.iterrows()])
 
     features = pd.DataFrame(results)

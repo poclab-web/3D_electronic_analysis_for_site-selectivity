@@ -6,3 +6,4 @@ data/test/*
 data/validation/*
 libs/render_molecule.py
 definition_grid.ipynb
+libs/__pycache__

@@ -17,12 +17,52 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import AllChem
 import cclib
+
+
+def _total_ram_gb() -> int:
+    """Return total physical RAM in GiB (best effort)."""
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        phys_pages = os.sysconf("SC_PHYS_PAGES")
+        total_bytes = int(page_size) * int(phys_pages)
+        return max(1, total_bytes // (1024**3))
+    except (AttributeError, ValueError, OSError):
+        return 1
+
+
+def _positive_int_from_env(name: str, default: int) -> int:
+    """Read a positive integer from environment; fallback to default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Runtime resources for Gaussian/cubegen.
+# Defaults:
+# - NUM_THREADS: all detected CPU cores
+# - MEMORY_GB : half of detected RAM
+# Overrides:
+# - GAUSSIAN_NUM_THREADS (positive integer)
+# - GAUSSIAN_MEMORY_GB  (positive integer)
+NUM_THREADS = _positive_int_from_env("GAUSSIAN_NUM_THREADS", os.cpu_count() or 1)
+MEMORY_GB = _positive_int_from_env("GAUSSIAN_MEMORY_GB", max(1, _total_ram_gb() // 2))
+OUTPUT_ROOT = os.path.join(os.path.expanduser("~"), "molecules")
+GAUSSIAN_RUN_COMMAND = os.getenv(
+    "GAUSSIAN_RUN_COMMAND",
+    "source ~/.bash_profile && g16",
+)
 
 
 def energy_cut(mol: Chem.Mol, res, max_energy: float) -> None:
@@ -266,7 +306,7 @@ def transform(conf: np.ndarray, carbonyl_atom) -> np.ndarray:
     return conf_rot.T
 
 
-def run_subprocess(gjf: str):
+def run_subprocess(gjf: str) -> Optional[subprocess.CompletedProcess]:
     """Run Gaussian locally using g16 with a given input file.
 
     This helper wraps a Gaussian 16 execution with the user's shell
@@ -285,7 +325,7 @@ def run_subprocess(gjf: str):
     """
     try:
         result = subprocess.run(
-            "source ~/.bash_profile ; g16 {gjf}".format(gjf=gjf),
+            "{cmd} {gjf}".format(cmd=GAUSSIAN_RUN_COMMAND, gjf=gjf),
             shell=True,
             check=True,
             capture_output=True,
@@ -299,7 +339,7 @@ def run_subprocess(gjf: str):
         return None
 
 
-def run_subprocess_remote(gjf: str, path: str) -> None:
+def run_subprocess_remote(gjf: str, path: str = GAUSSIAN_RUN_COMMAND) -> None:
     """Run Gaussian via a shell/SSH command, feeding the gjf file to stdin.
 
     Parameters
@@ -336,7 +376,11 @@ def run_subprocess_remote(gjf: str, path: str) -> None:
         print(f"ERROR: {e}")
 
 
-def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
+def calc_ket(
+    out_path: str,
+    smiles: str,
+    run_path: str = GAUSSIAN_RUN_COMMAND,
+) -> None:
     """Main workflow for a single ketone: conformers → Gaussian → cube files.
 
     Given a SMILES string, this function:
@@ -400,7 +444,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
     substruct_pattern = Chem.MolFromSmarts("[#6](=[#8])([#6])([#6])")
     substruct = mol.GetSubstructMatch(substruct_pattern)
 
-    # Reorder the last two indices to enforce a consistent direction
+    # Reorder substituent atoms so that downstream alignment is deterministic
     if int(substruct[3]) < int(substruct[2]):
         substruct = (substruct[0], substruct[1], substruct[3], substruct[2])
 
@@ -427,7 +471,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
     for conf in mol.GetConformers():
         conf_id = conf.GetId()
 
-        # Backup directory (e.g., previously computed data)
+        # Backup directory that may already contain completed Gaussian results
         backup_path = out_path.replace(
             "competitive_ketones", "competitive_ketones_20250621"
         )
@@ -446,10 +490,11 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             xyz_block = Chem.rdmolfiles.MolToXYZBlock(mol, confId=conf_id)
             xyz_lines = "\n".join(xyz_block.split("\n")[2:])  # skip header lines
 
+            # Write optimization/frequency input from the RDKit conformer geometry
             with open(opt_gjf, "w") as f:
                 gjf_input = (
-                    f"%nprocshared=24\n"
-                    f"%mem=30GB\n"
+                    f"%nprocshared={NUM_THREADS}\n"
+                    f"%mem={MEMORY_GB}GB\n"
                     f"%chk={out_path}/opt{conf_id}.chk\n"
                     "# freq opt=calcfc B3LYP/def2SVP EmpiricalDispersion=GD3BJ "
                     "optcyc=300 int=ultrafine\n\n"
@@ -461,7 +506,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
 
             run_subprocess_remote(opt_gjf, run_path)
 
-        # Read optimization result with cclib
+        # Parse optimized geometry and MO information from the Gaussian log
         opt_log_for_cclib = os.path.join(out_path, f"opt{conf_id}.log")
         data = cclib.io.ccread(opt_log_for_cclib)
 
@@ -494,7 +539,8 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             )
             print(f"{sp_log_name} copied to {local_path}.")
         else:
-            # Prepare SP input from optimized geometry and aligned coordinates
+            # Align the final optimized coordinates to a common molecular frame
+            # before single-point evaluation and cube generation.
             coords = data.atomcoords[-1]
             coords = transform(coords, substruct)
             atomic_numbers = data.atomnos
@@ -507,10 +553,11 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
                     f"{atomic_num} {coord[0]: .6f} {coord[1]: .6f} {coord[2]: .6f}\n"
                 )
 
+            # Write single-point input in the aligned coordinate system.
             with open(sp_gjf, "w") as f:
                 gjf_input = (
-                    f"%nprocshared=24\n"
-                    f"%mem=30GB\n"
+                    f"%nprocshared={NUM_THREADS}\n"
+                    f"%mem={MEMORY_GB}GB\n"
                     f"%chk={out_path}/sp{conf_id}.chk\n"
                     "# wb97xd/def2tzvp scrf=(smd,solvent=methanol) nosymm "
                     "int=ultrafine\n\n"
@@ -523,7 +570,11 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             # Run SP, formchk, and cube generation
             run_subprocess_remote(sp_gjf, run_path)
             subprocess.run(
-                ["bash", "-c", f"source ~/.bash_profile && formchk {chk_path} {fchk_path}"]
+                [
+                    "bash",
+                    "-c",
+                    f"source ~/.bash_profile && formchk {chk_path} {fchk_path}",
+                ]
             )
 
             dt_cube = f"{out_path}/Dt{conf_id}.cube"
@@ -531,7 +582,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
                 [
                     "bash",
                     "-c",
-                    f"source ~/.bash_profile && cubegen 24 Density=SCF {fchk_path} {dt_cube} -3 h",
+                    f"source ~/.bash_profile && cubegen {NUM_THREADS} Density=SCF {fchk_path} {dt_cube} -3 h",
                 ]
             )
 
@@ -540,7 +591,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
                 [
                     "bash",
                     "-c",
-                    f"source ~/.bash_profile && cubegen 24 Potential=SCF {fchk_path} {esp_cube} -3 h",
+                    f"source ~/.bash_profile && cubegen {NUM_THREADS} Potential=SCF {fchk_path} {esp_cube} -3 h",
                 ]
             )
 
@@ -552,7 +603,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             [
                 "bash",
                 "-c",
-                f"source ~/.bash_profile && cubegen 24 MO={homo_index + 1} "
+                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 1} "
                 f"{fchk_path} {homo_cube} -3 h",
             ]
         )
@@ -562,7 +613,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             [
                 "bash",
                 "-c",
-                f"source ~/.bash_profile && cubegen 24 MO={homo_index + 2} "
+                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 2} "
                 f"{fchk_path} {lumo_cube} -3 h",
             ]
         )
@@ -572,7 +623,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             [
                 "bash",
                 "-c",
-                f"source ~/.bash_profile && cubegen 24 MO={homo_index + 3} "
+                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 3} "
                 f"{fchk_path} {lumo1_cube} -3 h",
             ]
         )
@@ -582,7 +633,7 @@ def calc_ket(out_path: str, smiles: str, run_path: str) -> None:
             [
                 "bash",
                 "-c",
-                f"source ~/.bash_profile && cubegen 24 MO={homo_index + 4} "
+                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 4} "
                 f"{fchk_path} {lumo2_cube} -3 h",
             ]
         )
@@ -597,8 +648,8 @@ def main() -> None:
 
     This function:
 
-    1. Defines the Gaussian run command (`run_path`).
-    2. Sets the root output directory under the user's home (``~/molecules``).
+    1. Uses the module-level Gaussian run command (`GAUSSIAN_RUN_COMMAND`).
+    2. Sets the root output directory from ``OUTPUT_ROOT``.
     3. Reads an Excel file ``data/data.xlsx`` which must contain at least
        the columns ``InChIKey`` and ``SMILES``.
     4. For each row, calls ``calc_ket`` with an output directory named by
@@ -608,13 +659,7 @@ def main() -> None:
     -------
     None
     """
-    # Example local Gaussian command. For remote execution, replace with
-    # an ssh command such as:
-    # run_path = 'ssh user@host "source ~/.bash_profile && g16"'
-    run_path = "source ~/.bash_profile && g16"
-
-    home = Path.home()
-    out_root = home / "molecules"
+    out_root = Path(OUTPUT_ROOT)
 
     df = pd.read_excel("data/data.xlsx")
 
@@ -623,7 +668,7 @@ def main() -> None:
         inchi_key = row["InChIKey"]
         smiles = row["SMILES"]
         out_path = out_root / inchi_key
-        calc_ket(str(out_path), smiles, run_path)
+        calc_ket(str(out_path), smiles, GAUSSIAN_RUN_COMMAND)
 
 
 if __name__ == "__main__":

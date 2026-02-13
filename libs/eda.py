@@ -1,7 +1,18 @@
-from matplotlib import pyplot as plt
-import pandas as pd
+"""Plotting utilities for exploratory data analysis."""
+
 import os
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+
+
+def _ensure_output_dir(save_path: str) -> None:
+    """Create parent directory for an output path if needed."""
+    out_dir = os.path.dirname(save_path)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+
 
 def plot_origin_regression_series(
     series_data: dict[str, np.ndarray],
@@ -35,12 +46,9 @@ def plot_origin_regression_series(
     dict[str, float]
         Dictionary {label: ΔΔG} for each series, in kcal/mol.
     """
-    # --- ensure output folder exists ---
-    out_dir = os.path.dirname(save_path)
-    if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
+    _ensure_output_dir(save_path)
 
-    # default colors if not provided
+    # Default colors if not provided.
     if colors is None:
         colors = ["darkorange", "blue", "green"]
 
@@ -50,7 +58,7 @@ def plot_origin_regression_series(
     fig, ax = plt.subplots(figsize=(3, 3))
     delta_delta_g_values: dict[str, float] = {}
 
-    # gather all x,y for axis range
+    # Gather all x/y values to define axis ranges.
     all_x = np.concatenate([arr[:, 0] for arr in series_data.values()])
     all_y = np.concatenate([arr[:, 1] for arr in series_data.values()])
 
@@ -71,7 +79,7 @@ def plot_origin_regression_series(
 
     n_series = len(series_data)
 
-    # --- main loop over each series ---
+    # Main loop over each series.
     for i, (label, arr) in enumerate(series_data.items()):
         x = arr[:, 0]
         y = arr[:, 1]
@@ -89,7 +97,7 @@ def plot_origin_regression_series(
         delta_delta_g = -1.99 * 0.273 * np.log(slope)
         delta_delta_g_values[label] = float(round(delta_delta_g, 2))
 
-        # plotting of line and points
+        # Plot line and points.
         color = colors[i % len(colors)]
         x_fit = np.linspace(0.0, x.max(), 100)
         y_fit = slope * x_fit
@@ -113,12 +121,12 @@ def plot_origin_regression_series(
             label=label,
         )
 
-        # ===== text position =====
+        # Text position.
         if label in text_positions:
-            # 明示的に座標が指定されている場合はそれを使う
+            # Use explicitly provided coordinates when available.
             x_text, y_text = text_positions[label]
         else:
-            # 自動配置（直線に直交する方向にオフセット）
+            # Automatic placement: offset along the normal direction.
             x0 = float(np.max(x))
             y0 = slope * x0
 
@@ -171,7 +179,7 @@ def plot_origin_regression_series(
             zorder=2,
         )
 
-    # origin point
+    # Origin point.
     ax.scatter(0, 0, color="black", s=10, zorder=2)
 
     ax.set_xlabel(r"$-\log([\mathrm{A}_1]_f/[\mathrm{A}_1]_0)$")
@@ -192,6 +200,8 @@ def plot_origin_regression_series(
     plt.close(fig)
 
     return delta_delta_g_values
+
+
 def plot_dft_bar_dual(save_path: str) -> None:
     """Plot DFT ΔG‡ (left panel) and experimental ΔΔG‡ (right panel) and save the figure.
 
@@ -205,10 +215,7 @@ def plot_dft_bar_dual(save_path: str) -> None:
         Output image file path (e.g., "data/DFT.png").
         If intermediate folders in the path do not exist, they are created.
     """
-    # --- ensure output folder exists ---
-    out_dir = os.path.dirname(save_path)
-    if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
+    _ensure_output_dir(save_path)
 
     # Labels
     reducing_agents = [
@@ -236,17 +243,17 @@ def plot_dft_bar_dual(save_path: str) -> None:
     ]
 
     # ΔG‡ data
-    data_full = np.array([
-        [21.8, 26.5, 26.5, 29.0, 25.0, 27.4, 30.6],
-        [23.0, 14.8, 13.8, 15.9, 14.2, 15.4, 18.4],
-        [26.3, 15.6, 15.4, 17.3, 14.0, 16.2, 17.6],
-        [28.4, 19.2, 16.2, 18.7, 15.6, 19.0, 20.1],
-    ])
+    data_full = np.array(
+        [
+            [21.8, 26.5, 26.5, 29.0, 25.0, 27.4, 30.6],
+            [23.0, 14.8, 13.8, 15.9, 14.2, 15.4, 18.4],
+            [26.3, 15.6, 15.4, 17.3, 14.0, 16.2, 17.6],
+            [28.4, 19.2, 16.2, 18.7, 15.6, 19.0, 20.1],
+        ]
+    )
 
     # ΔΔG‡ data
-    data_delta = np.array([
-        [-2.56, -1.72, -2.02, -0.25, 0.56],
-    ])
+    data_delta = np.array([[-2.56, -1.72, -2.02, -0.25, 0.56]])
 
     # Colors for 7 substrates
     colors = [
@@ -260,7 +267,8 @@ def plot_dft_bar_dual(save_path: str) -> None:
     ]
 
     fig, (ax1, ax2) = plt.subplots(
-        1, 2,
+        1,
+        2,
         figsize=(8, 3),
         gridspec_kw={"width_ratios": [6.0, 1.0]},
     )
@@ -294,7 +302,7 @@ def plot_dft_bar_dual(save_path: str) -> None:
 
     # ===== Right panel: ΔΔG‡ =====
     x2 = np.arange(1) * 1.2
-    for i, (label, color) in enumerate(zip(substrates_delta, colors[2:])):  # substrates 3–7
+    for i, (label, color) in enumerate(zip(substrates_delta, colors[2:])):  # substrates 3-7
         offset = (i - 2) * width
         bars = ax2.bar(x2 + offset, data_delta[:, i], width, label=label, color=color)
         for bar in bars:
@@ -331,12 +339,14 @@ def plot_dft_bar_dual(save_path: str) -> None:
 
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.15)
-    plt.savefig(save_path, dpi=500, transparent=False, bbox_inches="tight", pad_inches=0.02)
+    plt.savefig(
+        save_path,
+        dpi=500,
+        transparent=False,
+        bbox_inches="tight",
+        pad_inches=0.02,
+    )
     plt.close(fig)
-
-import os
-import pandas as pd
-import matplotlib.pyplot as plt
 
 
 def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd.DataFrame:
@@ -359,10 +369,7 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
     pandas.DataFrame
         The loaded DataFrame used for plotting.
     """
-    # --- ensure output folder exists ---
-    out_dir = os.path.dirname(save_path)
-    if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
+    _ensure_output_dir(save_path)
 
     # Load data
     df = pd.read_excel(
@@ -370,7 +377,17 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
         sheet_name="diketone_reduction_results",
         skiprows=1,
     )  # .iloc[:150]
-    print(df.columns)
+    def _resolve_numeric_column(frame: pd.DataFrame, label: int) -> pd.Series:
+        """Return column by numeric label, accepting both int and str forms."""
+        if label in frame.columns:
+            return frame[label]
+        label_str = str(label)
+        if label_str in frame.columns:
+            return frame[label_str]
+        raise KeyError(
+            f"Column '{label}' (or '{label_str}') was not found. "
+            f"Available columns: {list(frame.columns)}"
+        )
 
     # Create figure and axes
     fig, ax = plt.subplots(figsize=(2.5, 2.5))
@@ -391,12 +408,17 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
     ]
 
     # Stacked area plot (normalized to unity)
-    polys = ax.stackplot(
+    c1_series = _resolve_numeric_column(df, 1)
+    c2_series = _resolve_numeric_column(df, 2)
+    c3_series = _resolve_numeric_column(df, 3)
+    c4_series = _resolve_numeric_column(df, 4)
+
+    ax.stackplot(
         df["reaction rate [%]"] / 100,
-        df[1] / 200,
-        df[2] / 200,
-        df[3] / 200,
-        df[4] / 200,
+        c1_series / 200,
+        c2_series / 200,
+        c3_series / 200,
+        c4_series / 200,
         colors=colors,
         labels=labels,
     )
@@ -406,14 +428,14 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
     ax.legend(
         handles[::-1],
         labels[::-1],
-        loc="upper left",   # upper left of the plotting area
+        loc="upper left",  # Upper-left corner of the plotting area.
         ncol=1,
-        fontsize=8,         # keep font size
-        borderpad=0.2,      # padding inside legend frame
-        labelspacing=0.2,   # spacing between labels
-        handlelength=1.0,   # line length in legend
-        handletextpad=0.3,  # distance between line and text
-        borderaxespad=0.2,  # distance from axes to legend
+        fontsize=8,  # Keep font size.
+        borderpad=0.2,  # Padding inside legend frame.
+        labelspacing=0.2,  # Spacing between labels.
+        handlelength=1.0,  # Line length in legend.
+        handletextpad=0.3,  # Distance between marker and text.
+        borderaxespad=0.2,  # Distance from axes to legend.
         frameon=True,
         framealpha=0.8,
     )
@@ -433,62 +455,112 @@ def plot_diketone_reduction_stackplot(from_file_path: str, save_path: str) -> pd
     return df
 
 
-
 if __name__ == "__main__":
     series_data = {
-    'Series A': np.array([[2.18E-02, 2.56E-01],
-                          [2.47E-02, 6.25E-01],
-                          [5.35E-02, 1.50E+00]]),
-    'Series B': np.array([[2.78E-01, 9.95E-03],
-                          [4.78E-01, 1.98E-02],
-                          [7.42E-01, 2.96E-02]]),
-    'Series C': np.array([[3.55E-01, 3.78E-01],
-                          [8.25E-01, 8.37E-01],
-                          [2.04E+00, 2.14E+00]]),
+        "Series A": np.array(
+            [
+                [2.18e-02, 2.56e-01],
+                [2.47e-02, 6.25e-01],
+                [5.35e-02, 1.50e00],
+            ]
+        ),
+        "Series B": np.array(
+            [
+                [2.78e-01, 9.95e-03],
+                [4.78e-01, 1.98e-02],
+                [7.42e-01, 2.96e-02],
+            ]
+        ),
+        "Series C": np.array(
+            [
+                [3.55e-01, 3.78e-01],
+                [8.25e-01, 8.37e-01],
+                [2.04e00, 2.14e00],
+            ]
+        ),
     }
     text_pos = {
         "Series A": (0.7, 1.6),
         "Series B": (1.2, 0.3),
-        "Series C": (2.4, 2.4)
+        "Series C": (2.4, 2.4),
     }
-    ddg = plot_origin_regression_series(series_data, "data/eda/comparison_A.png",text_positions=text_pos,)
+    ddg = plot_origin_regression_series(
+        series_data,
+        "data/eda/comparison_A.png",
+        text_positions=text_pos,
+    )
     print(ddg)
+
     series_data = {
-        'Series A': np.array([[1.33E-01, 2.39E-01],
-                            [1.76E-01, 2.93E-01],
-                            [2.23E-01, 3.44E-01]]),
-        'Series B': np.array([[6.98E-03, 1.12E-01],
-                            [9.53E-02, 1.50E+00],
-                            [1.99E-01, 2.94E+00]]),
-        'Series C': np.array([[2.78E-01, 9.95E-03],
-                            [4.78E-01, 1.98E-02],
-                            [7.42E-01, 2.96E-02]])
+        "Series A": np.array(
+            [
+                [1.33e-01, 2.39e-01],
+                [1.76e-01, 2.93e-01],
+                [2.23e-01, 3.44e-01],
+            ]
+        ),
+        "Series B": np.array(
+            [
+                [6.98e-03, 1.12e-01],
+                [9.53e-02, 1.50e00],
+                [1.99e-01, 2.94e00],
+            ]
+        ),
+        "Series C": np.array(
+            [
+                [2.78e-01, 9.95e-03],
+                [4.78e-01, 1.98e-02],
+                [7.42e-01, 2.96e-02],
+            ]
+        ),
     }
     text_pos = {
-        "Series A": (0.7, .8),
+        "Series A": (0.7, 0.8),
         "Series C": (1.2, 0.3),
-        "Series B": (.8, 2.7)
+        "Series B": (0.8, 2.7),
     }
-    ddg = plot_origin_regression_series(series_data, "data/eda/comparison_B.png", text_positions=text_pos)
+    ddg = plot_origin_regression_series(
+        series_data,
+        "data/eda/comparison_B.png",
+        text_positions=text_pos,
+    )
     print(ddg)
+
     series_data = {
-        'Series A': np.array([[0.055710607, 0.683096845],
-                            [0.085297581, 1.124929597],
-                            [0.185114625, 2.424802726]]),
-        'Series B': np.array([[0.493475985, 0.108451708],
-                            [0.524728529, 0.116916450],
-                            [1.042394609, 0.237800709]]),
-        'Series C': np.array([[0.316998127, 0.099210565],
-                            [0.515215972, 0.152275946],
-                            [0.667829373, 0.213188769]])
+        "Series A": np.array(
+            [
+                [0.055710607, 0.683096845],
+                [0.085297581, 1.124929597],
+                [0.185114625, 2.424802726],
+            ]
+        ),
+        "Series B": np.array(
+            [
+                [0.493475985, 0.108451708],
+                [0.524728529, 0.116916450],
+                [1.042394609, 0.237800709],
+            ]
+        ),
+        "Series C": np.array(
+            [
+                [0.316998127, 0.099210565],
+                [0.515215972, 0.152275946],
+                [0.667829373, 0.213188769],
+            ]
+        ),
     }
     text_pos = {
         "Series A": (0.8, 2.3),
-        "Series C": (.7, 0.5),
-        "Series B": (1.7, .4)
+        "Series C": (0.7, 0.5),
+        "Series B": (1.7, 0.4),
     }
-    ddg = plot_origin_regression_series(series_data, "data/eda/comparison_C.png", text_positions=text_pos)
+    ddg = plot_origin_regression_series(
+        series_data,
+        "data/eda/comparison_C.png",
+        text_positions=text_pos,
+    )
     print(ddg)
+
     plot_dft_bar_dual("data/eda/DFT.png")
     plot_diketone_reduction_stackplot(
         "data/all_experimental_data.xlsx",
