@@ -506,9 +506,9 @@ def calc_ket(
 
             run_subprocess_remote(opt_gjf, run_path)
 
-        # Parse optimized geometry and MO information from the Gaussian log
+        # Parse optimized geometry from the optimization log
         opt_log_for_cclib = os.path.join(out_path, f"opt{conf_id}.log")
-        data = cclib.io.ccread(opt_log_for_cclib)
+        opt_data = cclib.io.ccread(opt_log_for_cclib)
 
         # ---------- Single-point step (sp) ----------
         sp_log_name = f"sp{conf_id}.log"
@@ -541,9 +541,9 @@ def calc_ket(
         else:
             # Align the final optimized coordinates to a common molecular frame
             # before single-point evaluation and cube generation.
-            coords = data.atomcoords[-1]
+            coords = opt_data.atomcoords[-1]
             coords = transform(coords, substruct)
-            atomic_numbers = data.atomnos
+            atomic_numbers = opt_data.atomnos
 
             sp_gjf = os.path.join(out_path, f"sp{conf_id}.gjf")
 
@@ -596,7 +596,14 @@ def calc_ket(
             )
 
         # ---------- Frontier orbitals (HOMO/LUMO etc.) ----------
-        homo_index = data.homos[0]
+        # Read the MO indices from the single-point calculation, since the
+        # orbital ordering can differ from the optimization/frequency job.
+        sp_log_for_cclib = os.path.join(out_path, f"sp{conf_id}.log")
+        sp_data = cclib.io.ccread(sp_log_for_cclib)
+        if sp_data is None or not hasattr(sp_data, "homos"):
+            raise ValueError(f"Failed to read HOMO/LUMO indices from {sp_log_for_cclib}")
+
+        homo_index = sp_data.homos[0]
 
         homo_cube = f"{out_path}/HOMO{conf_id}.cube"
         subprocess.run(

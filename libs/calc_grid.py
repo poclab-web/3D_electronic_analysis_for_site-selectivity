@@ -115,7 +115,7 @@ def calc_grid__(log: str, T: float) -> tuple[pd.DataFrame, float]:
         ijk = np.array(list(product(range(size[0]), range(size[1]), range(size[2]))))
         coord = ijk @ axis + origin
 
-        # Skip atomic lines
+        # Skip atomic lines｀
         for _ in range(n_atom):
             f.readline()
 
@@ -240,8 +240,6 @@ def calc_grid(path: str, T: float, folded: int) -> pd.Series:
             .sum()
         )
 
-        # Attach Gibbs-like weight per conformer
-        df["gibbs"] = weight
         grids.append(df.copy())
         weights.append(weight)
 
@@ -249,34 +247,28 @@ def calc_grid(path: str, T: float, folded: int) -> pd.Series:
         # No valid grids found; return empty Series
         return pd.Series(dtype=float)
 
-    def _total_keepnoindex(d: pd.DataFrame) -> pd.DataFrame:
-        """Thermodynamically weight all rows in group `d` (same x,y,z)."""
-        weights_arr = d.gibbs.values
-        # Shift to minimum
-        delta = weights_arr - np.min(weights_arr)
+    # Compute one Boltzmann weight per conformer and apply it globally.
+    # Missing voxels in a conformer then contribute zero rather than
+    # renormalizing the conformer weights locally at each grid point.
+    gibbs = np.asarray(weights, dtype=float)
+    delta = gibbs - np.min(gibbs)
+    expo = -delta / (3.1668114e-6 * T)
+    expo = np.clip(expo, -700, 0)
+    boltz = np.exp(expo)
+    boltz /= np.sum(boltz)
 
-        # Basic Boltzmann factor on Gibbs-like weight
-        boltz = np.exp(-delta / (3.1668114e-6 * T))
-        boltz /= np.sum(boltz)
+    weighted_grids = []
+    for grid, weight in zip(grids, boltz):
+        weighted = grid.copy()
+        weighted[["electronic", "electrostatic", "lumo"]] *= weight
+        weighted_grids.append(weighted)
 
-        return pd.DataFrame(
-            {
-                "x": d.x.mean(),
-                "y": d.y.mean(),
-                "z": d.z.mean(),
-                "electronic": (d.electronic * boltz).sum(),
-                "electrostatic": (d.electrostatic * boltz).sum(),
-                "lumo": (d.lumo * boltz).sum(),
-            },
-            index=["_"],
-        )
-
-    # Concatenate all conformer grids and apply weighting on each coarse grid point
-    grids_all = pd.concat(grids, ignore_index=True)
+    wgrids = pd.concat(weighted_grids, ignore_index=True)
     wgrids = (
-        grids_all.groupby(["x", "y", "z"], as_index=False)
-        .apply(_total_keepnoindex)
-        .reset_index(drop=True)
+        wgrids.groupby(["x", "y", "z"], as_index=False)[
+            ["electronic", "electrostatic", "lumo"]
+        ]
+        .sum()
         .astype({"x": int, "y": int, "z": int})
     )
 

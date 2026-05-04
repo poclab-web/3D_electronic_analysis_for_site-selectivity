@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import linregress
 
 
 def _ensure_output_dir(save_path: str) -> None:
@@ -12,6 +13,196 @@ def _ensure_output_dir(save_path: str) -> None:
     out_dir = os.path.dirname(save_path)
     if out_dir and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
+
+
+def _load_experimental_df(from_file_path: str) -> pd.DataFrame:
+    """Load the main experimental dataset and return the cleaned DataFrame."""
+    return pd.read_excel(from_file_path, skiprows=1)
+
+
+def _find_sigma_column(df: pd.DataFrame) -> str | None:
+    """Find the ±σ column corresponding to the experimental ΔΔG entry."""
+    sigma_candidates = [col for col in df.columns if str(col).strip().startswith("±σ")]
+    return sigma_candidates[-1] if sigma_candidates else None
+
+
+def _plot_regression_with_optional_errorbars(
+    x: np.ndarray,
+    y: np.ndarray,
+    save_path: str,
+    x_label: str,
+    y_label: str,
+    x_ticks: np.ndarray,
+    y_ticks: np.ndarray,
+    y_lim: tuple[float, float],
+    error: np.ndarray | None = None,
+    errorbar: bool = False,
+    color: str = "midnightblue",
+    slope_format: str = "+.1f",
+    text_position: tuple[float, float] = (0.95, 0.95),
+    text_align: str = "right",
+) -> None:
+    """Plot a regression with optional vertical error bars and save the figure."""
+    _ensure_output_dir(save_path)
+
+    mask = np.isfinite(x) & np.isfinite(y)
+    if error is not None:
+        mask = mask & np.isfinite(error)
+
+    x = x[mask]
+    y = y[mask]
+    if error is not None:
+        error = error[mask]
+
+    slope, intercept, r_value, p_value, std_err = linregress(x, y)
+    x_fit = np.linspace(np.nanmin(x), np.nanmax(x), 100)
+    y_fit = slope * x_fit + intercept
+
+    fig, ax = plt.subplots(figsize=(3, 2.5), facecolor="none")
+    fig.patch.set_alpha(0.0)
+
+    ax.plot(x_fit, y_fit, color=color, linewidth=1.5)
+    if errorbar and error is not None:
+        ax.errorbar(
+            x,
+            y,
+            yerr=error,
+            fmt="none",
+            ecolor=color,
+            elinewidth=1.5,
+            capsize=3,
+            alpha=0.9,
+        )
+    else:
+        ax.scatter(
+            x,
+            y,
+            facecolors="white",
+            edgecolors=color,
+            s=50,
+            linewidth=1.5,
+        )
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_xticks(x_ticks)
+    ax.set_yticks(y_ticks)
+    ax.set_ylim(y_lim)
+    ax.grid(False)
+
+    slope_str = f"{slope:{slope_format}}".replace("-", "−")
+    intercept_str = f"{intercept:+.1f}".replace("-", "−")
+    text_eq = (
+        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope_str}x {intercept_str}"
+        + "\n"
+        + rf"$R^2$ = {r_value**2:.2f}"
+    )
+    ax.text(
+        text_position[0],
+        text_position[1],
+        text_eq,
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment="top",
+        horizontalalignment=text_align,
+        color=color,
+    )
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=500)
+    plt.close(fig)
+
+
+def plot_hammett_from_excel(from_file_path: str, save_path: str) -> None:
+    """Plot Hammett σ vs ΔΔG‡expt. from the original Excel dataset."""
+    df = _load_experimental_df(from_file_path)
+    x = df["Hammett σ"].to_numpy(dtype=float)
+    y = df["ΔΔG.expt."].to_numpy(dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    _plot_regression_with_optional_errorbars(
+        x[mask],
+        y[mask],
+        save_path,
+        x_label="Hammett $\\sigma$",
+        y_label=r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]",
+        x_ticks=np.arange(-0.5, 1.1, 0.5),
+        y_ticks=np.arange(-2, 1.1, 1),
+        y_lim=(-2.5, 1.2),
+        error=None,
+        errorbar=False,
+    )
+
+
+def plot_hammett_errorbar_from_excel(from_file_path: str, save_path: str) -> None:
+    """Plot Hammett σ vs ΔΔG‡expt. with ±σ.expt. error bars."""
+    df = _load_experimental_df(from_file_path)
+    sigma_column = _find_sigma_column(df)
+    x = df["Hammett σ"].to_numpy(dtype=float)
+    y = df["ΔΔG.expt."].to_numpy(dtype=float)
+    error = df[sigma_column].to_numpy(dtype=float) if sigma_column is not None else None
+    mask = np.isfinite(x) & np.isfinite(y)
+    _plot_regression_with_optional_errorbars(
+        x[mask],
+        y[mask],
+        save_path,
+        x_label="Hammett $\\sigma$",
+        y_label=r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]",
+        x_ticks=np.arange(-0.5, 1.1, 0.5),
+        y_ticks=np.arange(-2, 1.1, 1),
+        y_lim=(-2.5, 1.2),
+        error=error[mask] if error is not None else None,
+        errorbar=True,
+    )
+
+
+def plot_carbonyl_angle_from_excel(from_file_path: str, save_path: str) -> None:
+    """Plot carbonyl angle vs ΔΔG‡expt. from the original Excel dataset."""
+    df = _load_experimental_df(from_file_path)
+    x = df["carbonyl angle"].to_numpy(dtype=float)
+    y = df["ΔΔG.expt."].to_numpy(dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    _plot_regression_with_optional_errorbars(
+        x[mask],
+        y[mask],
+        save_path,
+        x_label=r"carbonyl angle $\theta$ [°]",
+        y_label=r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]",
+        x_ticks=np.arange(100, 131, 10),
+        y_ticks=np.arange(-2, 1.1, 1),
+        y_lim=(-2.3, 2.2),
+        error=None,
+        errorbar=False,
+        color="saddlebrown",
+        slope_format="+.3f",
+        text_position=(0.05, 0.95),
+        text_align="left",
+    )
+
+
+def plot_carbonyl_angle_errorbar_from_excel(from_file_path: str, save_path: str) -> None:
+    """Plot carbonyl angle vs ΔΔG‡expt. with ±σ.expt. error bars."""
+    df = _load_experimental_df(from_file_path)
+    sigma_column = _find_sigma_column(df)
+    x = df["carbonyl angle"].to_numpy(dtype=float)
+    y = df["ΔΔG.expt."].to_numpy(dtype=float)
+    error = df[sigma_column].to_numpy(dtype=float) if sigma_column is not None else None
+    mask = np.isfinite(x) & np.isfinite(y)
+    _plot_regression_with_optional_errorbars(
+        x[mask],
+        y[mask],
+        save_path,
+        x_label=r"carbonyl angle $\theta$ [°]",
+        y_label=r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]",
+        x_ticks=np.arange(100, 131, 10),
+        y_ticks=np.arange(-2, 1.1, 1),
+        y_lim=(-2.3, 2.2),
+        error=error[mask] if error is not None else None,
+        errorbar=True,
+        color="saddlebrown",
+        slope_format="+.3f",
+        text_position=(0.05, 0.95),
+        text_align="left",
+    )
 
 
 def plot_origin_regression_series(
