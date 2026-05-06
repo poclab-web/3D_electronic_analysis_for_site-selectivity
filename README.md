@@ -109,7 +109,7 @@ Override:
 
 ## Original Article
 Daimon Sakaguchi, Taisei Kawasaki, Mayu Itakura, Chihiro Tada, and Hiroaki Gotoh,
-*Competition Experiment-Based Kinetic Analysis of Ketone Reductions and Prediction of Site- and Stereoselectivity*, 2026 (submitted).
+*Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in Ketone Reductions*, 2026 (submitted).
 
 ## License
 This project is available under the [MIT License](LICENSE.txt).
