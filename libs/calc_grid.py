@@ -13,6 +13,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import glob
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -34,8 +35,75 @@ def _positive_int_from_env(name: str, default: int) -> int:
 OUTPUT_ROOT = os.path.join(os.path.expanduser("~"), "molecules")
 NUM_WORKERS = _positive_int_from_env("GRID_NUM_WORKERS", os.cpu_count() or 1)
 
+# Descriptor settings selected from the 2026-06 model search:
+# no radial cutoff/taper, electronic density clipped at 1e-3, ESP mask at 1e-2.
+GRID_RADIUS = np.inf
+GRID_STEP = 2.0
+ELECTRONIC_DENSITY_CLIP = 1e-3
+ESP_DENSITY_MASK_THRESHOLD = 1e-2
+APPLY_RADIAL_TAPER = False
+TAPER_POWER = 1.0
 
-def calc_grid__(log: str, T: float) -> tuple[pd.DataFrame, float]:
+# Manuscript model selected from the 2026-06-29 search:
+# for initial diketone reductions, augment the LUMO descriptor with an
+# energy-weighted LUMO+1 term computed conformer-by-conformer.
+USE_LUMO_PLUS1_FOR_INITIAL_DIKETONES = os.getenv(
+    "GRID_USE_LUMO_PLUS1_INITIAL_DIKETONES",
+    "1",
+).strip().lower() not in {"0", "false", "no", "off"}
+LUMO_PLUS1_TAU_EV = float(os.getenv("GRID_LUMO_PLUS1_TAU_EV", "0.025"))
+LUMO_PLUS1_COMBINE_MODE = os.getenv("GRID_LUMO_PLUS1_COMBINE_MODE", "additive").strip()
+DIKETONE_INITIAL_ENTRY_RE = re.compile(r"^[a-f][1-4]$")
+
+
+def _lumo_plus1_path(log: str) -> str:
+    """Return the LUMO+1 cube path matching an opt*.log file."""
+    log_path = Path(log)
+    conf_id = log_path.stem.replace("opt", "", 1)
+    return str(log_path.with_name(f"LUMO+1_{conf_id}.cube"))
+
+
+def _sp_log_path(log: str) -> str:
+    """Return the single-point log path matching an opt*.log file."""
+    log_path = Path(log)
+    conf_id = log_path.stem.replace("opt", "", 1)
+    return str(log_path.with_name(f"sp{conf_id}.log"))
+
+
+def _read_mo_cube_values(cube_path: str, n_atom: int, n_values: int) -> np.ndarray:
+    """Read MO cube values robustly across Gaussian cube header variants."""
+    # Some MO cubes contain an extra orbital-index line after the atom block,
+    # while others do not. Read after the atom block and take the final grid
+    # values so both variants are handled consistently.
+    with open(cube_path, "r", encoding="UTF-8") as f:
+        for _ in range(6 + abs(n_atom)):
+            f.readline()
+        raw_values = np.fromstring(f.read(), dtype=float, sep=" ")
+
+    if raw_values.size < n_values:
+        raise ValueError(
+            f"{cube_path} has {raw_values.size} numeric values, expected at least {n_values}"
+        )
+    return raw_values[-n_values:].reshape(-1, 1)
+
+
+def _lumo_plus1_energy_weight(log: str) -> float:
+    """Compute the conformer-specific LUMO+1 mixing weight from SP MO energies."""
+    sp_data = cclib.io.ccread(_sp_log_path(log))
+    if sp_data is None or not hasattr(sp_data, "homos") or not hasattr(sp_data, "moenergies"):
+        raise ValueError(f"Failed to read MO energies from {_sp_log_path(log)}")
+    homo_index = int(sp_data.homos[0])
+    mo_energies = np.asarray(sp_data.moenergies[0], dtype=float)
+    delta_e = float(mo_energies[homo_index + 2] - mo_energies[homo_index + 1])
+    exponent = np.clip(delta_e / LUMO_PLUS1_TAU_EV, -700, 700)
+    return float(1.0 / (1.0 + np.exp(exponent)))
+
+
+def calc_grid__(
+    log: str,
+    T: float,
+    use_lumo_plus1: bool = False,
+) -> tuple[pd.DataFrame, float, float]:
     """Extract grid data (density, ESP, LUMO) and a thermodynamic weight from a single log/cube set.
 
     This function reads a Gaussian log file with thermochemical data (via cclib) and
@@ -61,7 +129,7 @@ def calc_grid__(log: str, T: float) -> tuple[pd.DataFrame, float]:
 
     Returns
     -------
-    tuple[pandas.DataFrame, float]
+    tuple[pandas.DataFrame, float, float]
         df : pandas.DataFrame
             Columns:
                 - "x", "y", "z": Cartesian coordinates of grid points (float)
@@ -70,6 +138,8 @@ def calc_grid__(log: str, T: float) -> tuple[pd.DataFrame, float]:
                 - "lumo": values from the LUMO cube (float)
         weight : float
             Gibbs-like quantity `G = enthalpy - T * entropy` extracted from the log file.
+        lumo_plus1_weight : float
+            Conformer-specific energy weight for LUMO+1. Zero when LUMO+1 is disabled.
 
     Notes
     -----
@@ -129,23 +199,33 @@ def calc_grid__(log: str, T: float) -> tuple[pd.DataFrame, float]:
             f.readline()
         esp_values = np.fromstring(f.read(), dtype=float, sep=" ").reshape(-1, 1)
 
+    n_values = int(np.prod(size))
+
     # ----- Read LUMO cube -----
-    # Note: one extra line after atoms (MO index line)
-    with open(lumo_path, "r", encoding="UTF-8") as f:
-        for _ in range(6 + n_atom + 1):
-            f.readline()
-        lumo_values = np.fromstring(f.read(), dtype=float, sep=" ").reshape(-1, 1)
+    lumo_values = _read_mo_cube_values(lumo_path, n_atom, n_values)
+
+    if use_lumo_plus1:
+        lumo_plus1_values = _read_mo_cube_values(_lumo_plus1_path(log), n_atom, n_values)
+        lumo_plus1_weight = _lumo_plus1_energy_weight(log)
+    else:
+        lumo_plus1_values = np.zeros_like(lumo_values)
+        lumo_plus1_weight = 0.0
 
     # Build DataFrame
     df = pd.DataFrame(
-        data=np.hstack((coord, dt_values, esp_values, lumo_values)),
-        columns=["x", "y", "z", "electronic", "electrostatic", "lumo"],
+        data=np.hstack((coord, dt_values, esp_values, lumo_values, lumo_plus1_values)),
+        columns=["x", "y", "z", "electronic", "electrostatic", "lumo", "lumo_plus1"],
     )
 
-    return df, weight
+    return df, weight, lumo_plus1_weight
 
 
-def calc_grid(path: str, T: float, folded: int) -> pd.Series:
+def calc_grid(
+    path: str,
+    T: float,
+    folded: int,
+    use_lumo_plus1: bool = False,
+) -> pd.Series:
     """Aggregate weighted grid values for all opt*.log files under a directory.
 
     For each log/cube set in `path`, this function:
@@ -184,9 +264,12 @@ def calc_grid(path: str, T: float, folded: int) -> pd.Series:
 
     Notes
     -----
-    - Grid points are first restricted to within radius 8 (in Å) from origin.
-    - Fields are tapered to zero at radius 8.
-    - Coordinates are scaled by 1/2, then rounded to the nearest integer
+    - Grid points are optionally restricted to within ``GRID_RADIUS`` from origin.
+    - Electronic density is clipped at ``ELECTRONIC_DENSITY_CLIP``.
+    - ESP is masked by the original electronic density with
+      ``ESP_DENSITY_MASK_THRESHOLD``.
+    - Fields are optionally tapered to zero at ``GRID_RADIUS``.
+    - Coordinates are scaled by ``GRID_STEP``, then rounded to the nearest integer
       (ceil for positive, floor for negative).
     - Folding is applied by taking the absolute value of y (mirror in y) and
       multiplying z by `folded`.
@@ -197,35 +280,54 @@ def calc_grid(path: str, T: float, folded: int) -> pd.Series:
     # Loop over optimization logs
     for log in glob.glob(f"{path}/opt*.log"):
         try:
-            df, weight = calc_grid__(log, T)
+            df, weight, lumo_plus1_weight = calc_grid__(log, T, use_lumo_plus1)
             print(f"PARSING SUCCESS {log}")
         except Exception as e:  # noqa: BLE001
             print(f"PARSING FAILURE {log}")
             print(e)
             continue
 
-        # Restrict to points within radius 8
+        # Restrict to points within the selected radial cutoff, if enabled.
         r2 = df["x"] ** 2 + df["y"] ** 2 + df["z"] ** 2
-        df = df[r2 < 8**2].copy()
+        if np.isfinite(GRID_RADIUS):
+            df = df[r2 < GRID_RADIUS**2].copy()
 
         # Clamp / transform electronic & electrostatic fields
         df["electrostatic"] = df["electrostatic"] * np.where(
-            df["electronic"] < 1e-2, 1e-2 - df["electronic"], 0.0
+            df["electronic"] < ESP_DENSITY_MASK_THRESHOLD,
+            ESP_DENSITY_MASK_THRESHOLD - df["electronic"],
+            0.0,
         )
         df["electronic"] = np.where(
-            df["electronic"] < 1e-2, df["electronic"], 1e-2
+            df["electronic"] < ELECTRONIC_DENSITY_CLIP,
+            df["electronic"],
+            ELECTRONIC_DENSITY_CLIP,
         )
 
-        # LUMO: square amplitude
-        df["lumo"] = df["lumo"] ** 2
+        # LUMO: square amplitude. For initial diketone reductions, add an
+        # energy-weighted LUMO+1 square term using the conformer's SP MO gap.
+        lumo_sq = df["lumo"] ** 2
+        if use_lumo_plus1:
+            lumo_plus1_sq = df["lumo_plus1"] ** 2
+            if LUMO_PLUS1_COMBINE_MODE == "additive":
+                lumo_sq = lumo_sq + lumo_plus1_weight * lumo_plus1_sq
+            elif LUMO_PLUS1_COMBINE_MODE == "convex":
+                lumo_sq = (1.0 - lumo_plus1_weight) * lumo_sq + (
+                    lumo_plus1_weight * lumo_plus1_sq
+                )
+            else:
+                raise ValueError(f"Unsupported LUMO+1 combine mode: {LUMO_PLUS1_COMBINE_MODE}")
+        df["lumo"] = lumo_sq
 
-        # Radial taper to zero at r = 8
-        r = np.linalg.norm(df[["x", "y", "z"]], axis=1).reshape(-1, 1)
-        taper = np.where(r < 8.0, 1.0 - r / 8.0, 0.0)
-        df[["electronic", "electrostatic", "lumo"]] *= taper
+        # Radial taper to zero at the selected cutoff radius, if enabled.
+        if APPLY_RADIAL_TAPER and np.isfinite(GRID_RADIUS):
+            r = np.linalg.norm(df[["x", "y", "z"]], axis=1).reshape(-1, 1)
+            taper = np.where(r < GRID_RADIUS, 1.0 - r / GRID_RADIUS, 0.0)
+            taper = taper**TAPER_POWER
+            df[["electronic", "electrostatic", "lumo"]] *= taper
 
         # Coarse grid: scale and round
-        df[["x", "y", "z"]] /= 2.0
+        df[["x", "y", "z"]] /= GRID_STEP
         df[["x", "y", "z"]] = np.where(
             df[["x", "y", "z"]] > 0,
             np.ceil(df[["x", "y", "z"]]),
@@ -355,7 +457,17 @@ def process_row(row: pd.Series) -> pd.Series:
         to one molecule.
     """
     target_dir = Path(OUTPUT_ROOT) / row["InChIKey"]
-    return calc_grid(str(target_dir), row["temperature"], folded=1)
+    entry = str(row.get("entry", ""))
+    use_lumo_plus1 = (
+        USE_LUMO_PLUS1_FOR_INITIAL_DIKETONES
+        and DIKETONE_INITIAL_ENTRY_RE.match(entry) is not None
+    )
+    return calc_grid(
+        str(target_dir),
+        row["temperature"],
+        folded=1,
+        use_lumo_plus1=use_lumo_plus1,
+    )
 
 
 def calc_grid_(path: str) -> None:
@@ -390,9 +502,13 @@ def calc_grid_(path: str) -> None:
     print(f"START PARSING {path}")
     df = pd.read_excel(path)
 
-    # Multiprocessing over rows (worker count is configurable via NUM_WORKERS).
-    with Pool(NUM_WORKERS) as pool:
-        results = pool.map(process_row, [row for _, row in df.iterrows()])
+    rows = [row for _, row in df.iterrows()]
+    if NUM_WORKERS <= 1:
+        results = [process_row(row) for row in rows]
+    else:
+        # Multiprocessing over rows (worker count is configurable via NUM_WORKERS).
+        with Pool(NUM_WORKERS) as pool:
+            results = pool.map(process_row, rows)
 
     features = pd.DataFrame(results)
     df_out = pd.concat([df, features], axis=1).fillna(0)

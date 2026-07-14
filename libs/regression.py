@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from itertools import product, combinations
 from multiprocessing import Pool
 from typing import Iterable, List, Sequence, Tuple
@@ -17,6 +18,44 @@ from sklearn.linear_model import (
 from sklearn.model_selection import KFold
 
 INPUT_DATA_PATH = "data/data.pkl"
+PREFERRED_REGRESSION_METHOD = os.getenv(
+    "PREFERRED_REGRESSION_METHOD",
+    "Lasso 0.006",
+)
+
+# Manuscript model selected from the 2026-06-29 search. H1 is treated as an
+# additional training substrate, while the remaining holdout monoketones stay
+# outside the training set.
+EXTRA_TRAIN_ENTRIES = tuple(
+    entry.strip()
+    for entry in os.getenv("REGRESSION_EXTRA_TRAIN_ENTRIES", "H1").split(",")
+    if entry.strip()
+)
+
+# Spatial prefilter + variance preselection selected for the current manuscript
+# model: electronic/electrostatic box plus compact LUMO box, followed by
+# block-wise variance top-k selection.
+REGRESSION_USE_GRID_PREFILTER = os.getenv(
+    "REGRESSION_USE_GRID_PREFILTER",
+    "1",
+).strip().lower() not in {"0", "false", "no", "off"}
+GRID_BOUNDS = {
+    "electronic": (-6, 2, 1, 6, -4, 3),
+    "electrostatic": (-6, 2, 1, 6, -4, 3),
+    "lumo": (-4, 1, 1, 4, -1, 2),
+}
+BLOCK_VARIANCE_TOP = {
+    "electronic": 240,
+    "electrostatic": 200,
+    "lumo": 50,
+}
+
+
+def _preferred_regression_methods() -> List[str]:
+    preferred = PREFERRED_REGRESSION_METHOD.strip()
+    if preferred and preferred.lower() not in {"none", "auto"}:
+        return [preferred]
+    return []
 
 
 def _positive_int_from_env(name: str, default: int) -> int:
@@ -32,6 +71,45 @@ def _positive_int_from_env(name: str, default: int) -> int:
 
 
 NUM_WORKERS = _positive_int_from_env("REGRESSION_NUM_WORKERS", os.cpu_count() or 1)
+
+
+def _parse_coord(column: str) -> tuple[int, int, int]:
+    return tuple(map(int, re.findall(r"[+-]?\d+", column)))  # type: ignore[return-value]
+
+
+def _in_bounds(coords: np.ndarray, bounds: tuple[int, int, int, int, int, int]) -> np.ndarray:
+    xmin, xmax, ymin, ymax, zmin, zmax = bounds
+    return (
+        (coords[:, 0] >= xmin)
+        & (coords[:, 0] <= xmax)
+        & (coords[:, 1] >= ymin)
+        & (coords[:, 1] <= ymax)
+        & (coords[:, 2] >= zmin)
+        & (coords[:, 2] <= zmax)
+    )
+
+
+def _select_feature_indices(
+    name: str,
+    columns: Sequence[str],
+    train_scaled: np.ndarray,
+) -> np.ndarray:
+    """Select feature columns for one descriptor block."""
+    if not REGRESSION_USE_GRID_PREFILTER:
+        return np.arange(len(columns), dtype=int)
+
+    coords = np.asarray([_parse_coord(column) for column in columns], dtype=int)
+    bounds = GRID_BOUNDS[name]
+    candidate_indices = np.where(_in_bounds(coords, bounds))[0]
+
+    keep_n = BLOCK_VARIANCE_TOP.get(name)
+    if keep_n is None or keep_n >= len(candidate_indices):
+        return candidate_indices
+
+    variances = np.var(train_scaled[:, candidate_indices], axis=0)
+    order = np.argsort(variances)[::-1]
+    keep_local = np.sort(order[:keep_n])
+    return candidate_indices[keep_local]
 
 
 def regression(
@@ -274,7 +352,14 @@ def regression_(path: str, names: Sequence[str]) -> None:
     """
     print(path)
     df = pd.read_pickle(path)
-    df_train = df[df["test"] == 0]
+    df = df.copy()
+    if EXTRA_TRAIN_ENTRIES:
+        extra_train_mask = df["entry"].astype(str).isin(EXTRA_TRAIN_ENTRIES)
+        df.loc[extra_train_mask, "test"] = 0
+
+    has_y = pd.to_numeric(df["ΔΔG.expt."], errors="coerce").notna()
+    train_mask = (df["test"] == 0) & has_y
+    df_train = df[train_mask]
 
     y_train = df_train["ΔΔG.expt."].values
     y = df["ΔΔG.expt."].values
@@ -282,36 +367,71 @@ def regression_(path: str, names: Sequence[str]) -> None:
     trains: List[np.ndarray] = []
     train_tests: List[np.ndarray] = []
     stds: List[float] = []
+    selected_indices_by_name: List[np.ndarray] = []
+    block_columns_by_name: List[List[str]] = []
 
     # --- build feature blocks ---
     for name in names:
-        train = df_train.filter(like=f"{name}_fold").to_numpy()
+        columns = df.filter(like=f"{name}_fold").columns.tolist()
+        train = df_train[columns].to_numpy()
         std = np.std(train)
         # std = np.linalg.norm(train)  # /np.size(train)
-        train_test = df.filter(like=f"{name}_fold").to_numpy()
+        train_test = df[columns].to_numpy()
         # train -= average
         # train_test -= average
 
         train /= std
         train_test /= std
 
-        trains.append(train)
-        train_tests.append(train_test)
+        selected_indices = _select_feature_indices(name, columns, train)
+
+        trains.append(train[:, selected_indices])
+        train_tests.append(train_test[:, selected_indices])
         stds.append(std)
+        selected_indices_by_name.append(selected_indices)
+        block_columns_by_name.append(columns)
 
     # --- define methods ---
-    methods: List[str] = []
+    methods: List[str] = _preferred_regression_methods()
+    if not methods:
+        lasso_alphas = np.unique(
+            np.r_[
+                np.logspace(np.log2(5e-4), np.log2(1.2e-2), 18, base=2),
+                [
+                    0.0009765625,
+                    0.001381067932,
+                    0.001953125,
+                    0.00225932721534,
+                    0.00390625,
+                    0.006,
+                    0.0078125,
+                ],
+            ]
+        )
+        for alpha in lasso_alphas:
+            methods.append(f"Lasso {alpha}")
 
-    for alpha in np.logspace(-14, 0, 15, base=2):
-        methods.append(f"Lasso {alpha}")
-    for alpha in np.logspace(-9, 5, 15, base=2):
-        methods.append(f"Ridge {alpha}")
-    for alpha, l1ratio in product(np.logspace(-14, 0, 15, base=2), [0.5]):  # np.round(np.linspace(0.1, 0.9, 9),decimals=10)  # noqa: E501
-        methods.append(f"ElasticNet {alpha} {l1ratio}")
-    for n_components in range(1, 15):
-        methods.append(f"PLS {n_components}")
-    for n_components in range(1, 15):
-        methods.append(f"OMP {n_components}")
+        for alpha in [0.1, 0.3, 1.0, 3.0, 10.0]:
+            methods.append(f"Ridge {alpha}")
+
+        elastic_alphas = [
+            0.0008,
+            0.00114505,
+            0.0016,
+            0.00225932721534,
+            0.00390625,
+            0.006,
+            0.0078125,
+        ]
+        for alpha, l1ratio in product(elastic_alphas, [0.5, 0.7, 0.9]):
+            methods.append(f"ElasticNet {alpha} {l1ratio}")
+
+        for n_components in range(2, 7):
+            methods.append(f"PLS {n_components}")
+
+        for n_nonzero in [5, 7, 9, 11, 13, 15, 17]:
+            methods.append(f"OMP {n_nonzero}")
+    methods = list(dict.fromkeys(methods))
 
     # index for grid coefficients (x y z)
     grid = pd.DataFrame(
@@ -325,31 +445,46 @@ def regression_(path: str, names: Sequence[str]) -> None:
     X_train_full = np.concatenate(trains, axis=1)
     X_full = np.concatenate(train_tests, axis=1)
 
-    with Pool(NUM_WORKERS) as pool:
-        results = list(
-            pool.imap_unordered(
-                regression_parallel,
-                [
-                    (X_train_full, X_full, y_train, y, method)
-                    for method in methods
-                ],
-            )
-        )
+    regression_args = [
+        (X_train_full, X_full, y_train, y, method)
+        for method in methods
+    ]
+    if NUM_WORKERS <= 1:
+        results = [regression_parallel(args) for args in regression_args]
+    else:
+        with Pool(NUM_WORKERS) as pool:
+            results = list(pool.imap_unordered(regression_parallel, regression_args))
 
     # --- collect results ---
     for result in results:
         method, coef, intercept, predict, original_array = result
         print(method)
 
-        # split coefficient vector back into blocks for each name
-        coef_blocks = np.split(coef, len(names))
-        for name, std, coef_block in zip(names, stds, coef_blocks):
-            grid[f"{method} {name}_coef"] = coef_block / std
+        # split coefficient vector back into blocks for each name and place
+        # selected coefficients back on the full coordinate grid. Unselected
+        # features are kept as zero coefficients so downstream contribution
+        # plotting can continue to use the original full grid.
+        coef_blocks: List[np.ndarray] = []
+        start = 0
+        for selected_indices in selected_indices_by_name:
+            stop = start + len(selected_indices)
+            coef_blocks.append(coef[start:stop])
+            start = stop
+        for name, std, coef_block, selected_indices, columns in zip(
+            names,
+            stds,
+            coef_blocks,
+            selected_indices_by_name,
+            block_columns_by_name,
+        ):
+            full_coef = np.zeros(len(columns), dtype=float)
+            full_coef[selected_indices] = coef_block / std
+            grid[f"{method} {name}_coef"] = full_coef
 
         df[f"{method} intercept"] = intercept
-        df[f"{method} regression"] = np.where(df["test"] == 0, predict, np.nan)
-        df[f"{method} prediction"] = np.where(df["test"] == 1, predict, np.nan)
-        df.loc[df["test"] == 0, f"{method} cv"] = original_array
+        df[f"{method} regression"] = np.where(train_mask, predict, np.nan)
+        df[f"{method} prediction"] = np.where(~train_mask, predict, np.nan)
+        df.loc[train_mask, f"{method} cv"] = original_array
 
     feature_names = "_".join(names)
     df.to_pickle(path.replace(".pkl", f"_{feature_names}_regression.pkl"))

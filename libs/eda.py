@@ -754,6 +754,6 @@ if __name__ == "__main__":
 
     plot_dft_bar_dual("data/eda/DFT.png")
     plot_diketone_reduction_stackplot(
-        "data/all_experimental_data.xlsx",
+        "data/Details_of_experimental_results.xlsx",
         "data/eda/reaction_rate_stackplot.png",
     )

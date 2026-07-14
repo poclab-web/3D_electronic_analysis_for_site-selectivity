@@ -65,6 +65,20 @@ python libs/regression.py
 python libs/graph.py
 ```
 
+### Current Reference Model
+
+The current 83-observation reference model is reproduced separately from the
+legacy three-field pipeline. It uses electronic/electrostatic compact grids,
+their max/min summaries, and nested LOOCV-selected Lasso regularization:
+
+```bash
+OMP_NUM_THREADS=1 python libs/current_model.py --workers 20
+```
+
+The frozen descriptor cache, fitted-model tables, and validation metrics are
+written to `data/current_model/`; YY plots, diketone profiles, and component
+interpretation plots are written to `data/validation/current_model/`.
+
 ## Runtime Configuration
 ### `libs/calc_mol.py`
 Defaults:
@@ -82,20 +96,37 @@ Environment-variable overrides:
 Defaults:
 - `OUTPUT_ROOT`: `~/molecules`
 - `NUM_WORKERS`: detected CPU core count
+- descriptor settings: no radial cutoff/taper, electronic density clip `1e-3`,
+  ESP density mask `1e-2`
+- initial diketone reductions use
+  `|LUMO|^2 + w|LUMO+1|^2`, with conformer-specific
+  `w = 1 / (1 + exp((E_LUMO+1 - E_LUMO) / 0.025 eV))`
 
 Override:
 - `GRID_NUM_WORKERS`
+- `GRID_USE_LUMO_PLUS1_INITIAL_DIKETONES`
+- `GRID_LUMO_PLUS1_TAU_EV`
+- `GRID_LUMO_PLUS1_COMBINE_MODE` (`additive` or `convex`)
 
 ### `libs/regression.py`
 Defaults:
 - `INPUT_DATA_PATH`: `data/data.pkl`
 - `NUM_WORKERS`: detected CPU core count
+- preferred model: `Lasso 0.006`
+- extra training entry: `H1`
+- descriptor prefilter:
+  electronic/electrostatic `x=-6..2, y=1..6, z=-4..3`,
+  LUMO `x=-4..1, y=1..4, z=-1..2`, then variance top
+  `240/200/50` for electronic/electrostatic/LUMO
 
 Override:
 - `REGRESSION_NUM_WORKERS`
+- `PREFERRED_REGRESSION_METHOD`
+- `REGRESSION_EXTRA_TRAIN_ENTRIES`
+- `REGRESSION_USE_GRID_PREFILTER`
 
 ## Main Input/Output Flow
-- Input raw table: `data/all_experimental_data.xlsx`
+- Input raw table: `data/Details_of_experimental_results.xlsx`
 - After `dataset.py`: `data/data.xlsx`
 - After `calc_grid.py`: `data/data.pkl`, `data/datafeat.csv`
 - After `regression.py`: regression summary files with suffix

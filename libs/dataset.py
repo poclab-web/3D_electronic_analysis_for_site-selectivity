@@ -22,6 +22,31 @@ except ImportError:
     import eda
 
 
+HOLDOUT_ENTRY_BY_NAME = {
+    "Benzoylacetonitrile": "H1",
+    "Bicyclo[2.2.1]hept-5-en-2-one (exo)": "H2(exo)",
+    "Bicyclo[2.2.1]hept-5-en-2-one (endo)": "H2(endo)",
+    "1,4-Cyclohexanedione Monoethyleneketal": "H3",
+    "Isophorone Oxide (cis)": "H4(cis)",
+    "Isophorone Oxide (trans)": "H4(trans)",
+    "2-methylcyclohexanone(trans)": "Dxx(trans)",
+    "2-methylcyclohexanone(cis)": "Dxx(cis)",
+}
+
+
+def apply_dataset_overrides(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply manuscript-model data-set conventions before downstream parsing."""
+    df = df.copy()
+    names = df["name"].astype(str)
+
+    for substrate_name, entry in HOLDOUT_ENTRY_BY_NAME.items():
+        mask = names == substrate_name
+        df.loc[mask, "entry"] = entry
+        df.loc[mask, "test"] = 1
+
+    return df
+
+
 def common(from_file_path: str) -> pd.DataFrame:
     """Load and preprocess the competitive-reaction Excel data.
 
@@ -42,6 +67,8 @@ def common(from_file_path: str) -> pd.DataFrame:
     """
     # Load
     df = pd.read_excel(from_file_path, skiprows=1)  # .iloc[:150]
+    df = apply_dataset_overrides(df)
+    df = df.dropna(subset=["SMILES"]).copy()
 
     # Generate RDKit Mol objects from SMILES
     df["mol"] = df["SMILES"].apply(Chem.MolFromSmiles)
@@ -523,7 +550,7 @@ def main() -> None:
     4. Generate Hammett and carbonyl-angle correlation plots.
     """
     # 1. Load data
-    df = common("data/all_experimental_data.xlsx")
+    df = common("data/Details_of_experimental_results.xlsx")
 
     # 2. Cleaned unique-molecule table
     output(df, "data/data.xlsx")
@@ -534,21 +561,21 @@ def main() -> None:
 
     # 4. Hammett plot from original Excel with and without error bars
     eda.plot_hammett_from_excel(
-        "data/all_experimental_data.xlsx",
+        "data/Details_of_experimental_results.xlsx",
         "data/eda/hammett.png",
     )
     eda.plot_hammett_errorbar_from_excel(
-        "data/all_experimental_data.xlsx",
+        "data/Details_of_experimental_results.xlsx",
         "data/eda/hammett_errorbar.png",
     )
 
     # 4'. Carbonyl-angle plot from original Excel with and without error bars
     eda.plot_carbonyl_angle_from_excel(
-        "data/all_experimental_data.xlsx",
+        "data/Details_of_experimental_results.xlsx",
         "data/eda/carbonyl angle.png",
     )
     eda.plot_carbonyl_angle_errorbar_from_excel(
-        "data/all_experimental_data.xlsx",
+        "data/Details_of_experimental_results.xlsx",
         "data/eda/carbonyl angle_errorbar.png",
     )
 

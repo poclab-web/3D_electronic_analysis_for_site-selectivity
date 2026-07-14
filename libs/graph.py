@@ -9,10 +9,50 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Rectangle, Polygon
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from rdkit.Chem import PandasTools
+from rdkit import Chem
+from rdkit.Chem import Draw, PandasTools
 
 OUTPUT_ROOT = Path(os.path.expanduser("~")) / "molecules"
-CONTRIBUTIONS_ROOT = Path(os.path.expanduser("~")) / "contributions"
+CONTRIBUTIONS_ROOT = Path(os.getenv("CONTRIBUTIONS_ROOT", "data/contributions"))
+PREFERRED_REGRESSION_METHOD = os.getenv(
+    "PREFERRED_REGRESSION_METHOD",
+    "Lasso 0.006",
+)
+BENZOPHENONE_REF_INCHIKEY = "RWCCWEUUXYIKHB-KHWBWMQUSA-N"
+
+CONTRIBUTION_VIOLIN_COMPONENTS = [
+    ("Electronic", "electronic_cont", "darkmagenta"),
+    ("Electrostatic", "electrostatic_cont", "forestgreen"),
+    ("LUMO", "lumo_cont", "saddlebrown"),
+]
+
+SKELETON_GROUP_COLORS = {
+    "A": "#4c78a8",
+    "B": "#f58518",
+    "C": "#54a24b",
+    "D": "#b279a2",
+    "E": "#e45756",
+}
+
+SKELETON_HIGHLIGHT_PICKS = [
+    ("Electronic", "A", "A24", "A positive outlier"),
+    ("Electronic", "B", "B6", "B negative representative"),
+    ("Electronic", "C", "C3", "C negative representative"),
+    ("Electronic", "D", "D11(trans)", "D large negative"),
+    ("Electronic", "E", "E2(exo)", "E negative representative"),
+    ("Electrostatic", "A", "A12", "A large negative"),
+    ("Electrostatic", "B", "B5", "B large negative"),
+    ("Electrostatic", "C", "C10", "C large positive"),
+    ("Electrostatic", "D", "D13(cis)", "D large positive"),
+    ("Electrostatic", "E", "E3(exo)", "E large positive"),
+    ("LUMO", "A", "A16", "A positive representative"),
+    ("LUMO", "B", "B5", "B large positive"),
+    ("LUMO", "C", "C12", "C large negative"),
+    ("LUMO", "D", "D11(trans)", "D large negative"),
+    ("LUMO", "E", "E4", "E large negative"),
+]
+
+SELECTED_CONTRIBUTION_BREAKDOWN_ENTRIES = ("A24", "A12", "C3", "D11(trans)", "B5")
 
 
 def _ensure_output_dir(save_path: str | Path) -> Path:
@@ -66,6 +106,20 @@ def nan_r2(x,y):
     x,y=x[~np.isnan(x)],y[~np.isnan(x)]
     return 1-np.sum((y-x)**2)/np.sum((y-np.mean(y))**2)
 
+def _preferred_cv_column(df_results: pd.DataFrame) -> str:
+    """Select the preferred manuscript model if present; otherwise use best CV RMSE."""
+    preferred = PREFERRED_REGRESSION_METHOD.strip()
+    if preferred and preferred.lower() not in {"none", "auto"}:
+        preferred_column = f"{preferred} cv"
+        if preferred_column in df_results.index:
+            return preferred_column
+        print(
+            f"Preferred regression column '{preferred_column}' was not found; "
+            "falling back to the lowest CV RMSE."
+        )
+    return df_results["cv_RMSE"].idxmin()
+
+
 def evaluate_result(path):
     df=pd.read_pickle(path)
     df_results=pd.DataFrame(index=df.filter(like='cv').columns)
@@ -74,12 +128,13 @@ def evaluate_result(path):
     df_results["regression_RMSE"]=df.filter(like='regression').columns.map(lambda column: nan_rmse(df[column].values,df["ΔΔG.expt."].values))
     df_results["regression_r2"]=df.filter(like='regression').columns.map(lambda column: nan_r2(df[column].values,df["ΔΔG.expt."].values))
     df_results.to_csv(path.replace("_regression.pkl","_results.csv"))
-    best_cv_column=df_results["cv_RMSE"].idxmin()
-    print(best_cv_column,np.log2(float(best_cv_column.split()[1])))
-    return df_results["cv_RMSE"].idxmin()
+    best_cv_column = _preferred_cv_column(df_results)
+    print(best_cv_column, df_results.loc[best_cv_column, ["cv_RMSE", "cv_r2"]].to_dict())
+    return best_cv_column
 
 def best_parameter(path):
-    best_cv_column=pd.read_csv(path,index_col=0)["cv_RMSE"].idxmin()
+    results = pd.read_csv(path, index_col=0)
+    best_cv_column = _preferred_cv_column(results)
     coef=pd.read_csv(path.replace("_results.csv","_regression.csv"), index_col=0)
     coef = coef[[best_cv_column.replace("cv", "electronic_coef"), best_cv_column.replace("cv", "electrostatic_coef"), best_cv_column.replace("cv", "lumo_coef")]]
     coef.columns = ["electronic_coef", "electrostatic_coef","lumo_coef"]
@@ -622,6 +677,575 @@ def plot_contribution_bars(
     plt.close(fig)
 
 
+def plot_training_contribution_numberlines(
+    df: pd.DataFrame,
+    save_path: str,
+    label_column: str = "entry",
+    train_value: int = 0,
+) -> None:
+    """Plot training-substrate regression contributions on three number lines.
+
+    The function expects the DataFrame returned by :func:`best_parameter`,
+    or another DataFrame with the same columns. Only rows with ``test == 0``
+    are used. The plotted values are the fitted-regression contribution terms
+    for ``electronic_cont``, ``electrostatic_cont``, and ``lumo_cont``.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Regression/contribution table containing ``test``,
+        ``electronic_cont``, ``electrostatic_cont``, and ``lumo_cont``.
+    save_path : str
+        Output image path.
+    label_column : str, optional
+        Column used to label the minimum and maximum point on each number line.
+        Defaults to ``"entry"``.
+    train_value : int, optional
+        Value in the ``test`` column that denotes training data. Defaults to 0.
+
+    Returns
+    -------
+    None
+        The figure is saved to ``save_path``.
+    """
+    required_cols = [
+        "test",
+        "electronic_cont",
+        "electrostatic_cont",
+        "lumo_cont",
+    ]
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"DataFrame must contain column '{col}'.")
+
+    label_column_available = label_column in df.columns
+
+    test_values = pd.to_numeric(df["test"], errors="coerce")
+    train_df = df[test_values == train_value].copy()
+    train_df = train_df.dropna(
+        subset=["electronic_cont", "electrostatic_cont", "lumo_cont"]
+    )
+    if train_df.empty:
+        raise ValueError(f"No training rows with test == {train_value} were found.")
+
+    components = [
+        ("electronic_cont", "Electronic", "darkmagenta"),
+        ("electrostatic_cont", "Electrostatic", "forestgreen"),
+        ("lumo_cont", "LUMO", "saddlebrown"),
+    ]
+
+    all_values = np.concatenate(
+        [train_df[col].to_numpy(dtype=float) for col, _, _ in components]
+    )
+    all_values = all_values[np.isfinite(all_values)]
+    if all_values.size == 0:
+        raise ValueError("No finite contribution values were found.")
+
+    max_abs = float(np.max(np.abs(all_values)))
+    if max_abs == 0.0:
+        max_abs = 1.0
+    x_lim = max_abs * 1.15
+
+    fig, axes = plt.subplots(
+        nrows=3,
+        ncols=1,
+        figsize=(5.5, 3.4),
+        sharex=True,
+    )
+    fig.patch.set_alpha(0.0)
+
+    rng = np.random.default_rng(0)
+    n_train = len(train_df)
+
+    for ax, (col, label, color) in zip(axes, components):
+        values = train_df[col].to_numpy(dtype=float)
+        finite_mask = np.isfinite(values)
+        values = values[finite_mask]
+        plot_df = train_df.loc[finite_mask].copy()
+
+        # Small deterministic vertical jitter keeps overlapping substrates visible
+        # while preserving the number-line interpretation.
+        jitter = rng.uniform(-0.06, 0.06, size=len(values))
+
+        ax.axhline(0.0, color="black", linewidth=1.0, zorder=0)
+        ax.axvline(0.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.8)
+        ax.scatter(
+            values,
+            jitter,
+            s=18,
+            color=color,
+            edgecolors="white",
+            linewidths=0.4,
+            alpha=0.78,
+            zorder=2,
+        )
+
+        mean_value = float(np.mean(values)) if len(values) else 0.0
+        ax.scatter(
+            [mean_value],
+            [0.0],
+            marker="D",
+            s=34,
+            color="black",
+            edgecolors="white",
+            linewidths=0.5,
+            zorder=3,
+            label="mean",
+        )
+
+        if label_column_available and len(values):
+            for idx in [int(np.argmin(values)), int(np.argmax(values))]:
+                point_label = str(plot_df.iloc[idx][label_column])
+                ax.annotate(
+                    point_label,
+                    xy=(values[idx], jitter[idx]),
+                    xytext=(4, 5 if values[idx] >= 0 else -11),
+                    textcoords="offset points",
+                    fontsize=7,
+                    color=color,
+                    ha="left",
+                    va="bottom" if values[idx] >= 0 else "top",
+                )
+
+        ax.set_ylabel(
+            f"{label}\n[kcal/mol]",
+            rotation=0,
+            ha="right",
+            va="center",
+            labelpad=42,
+            color=color,
+        )
+        ax.set_ylim(-0.22, 0.22)
+        ax.set_yticks([])
+        ax.spines["left"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.grid(True, axis="x", linestyle=":", linewidth=0.6, alpha=0.45)
+
+    axes[-1].set_xlim(-x_lim, x_lim)
+    axes[-1].set_xlabel(
+        r"Contribution to fitted $\Delta\Delta G^\ddagger_{\mathrm{regression}}$ [kcal/mol]"
+    )
+    axes[0].set_title(
+        f"Training-substrate contribution distributions (N = {n_train})",
+        fontsize=10,
+    )
+    axes[0].legend(loc="upper right", frameon=False, fontsize=8)
+
+    fig.tight_layout()
+    save_path = _ensure_output_dir(save_path)
+    fig.savefig(save_path, dpi=500, transparent=False)
+    plt.close(fig)
+
+
+def _prepare_skeleton_contribution_delta(
+    df: pd.DataFrame,
+    ref_inchikey: str = BENZOPHENONE_REF_INCHIKEY,
+    train_value: int = 0,
+) -> pd.DataFrame:
+    required_cols = [
+        "test",
+        "entry",
+        "name",
+        "InChIKey",
+        "electronic_cont",
+        "electrostatic_cont",
+        "lumo_cont",
+    ]
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"DataFrame must contain column '{col}'.")
+
+    test_values = pd.to_numeric(df["test"], errors="coerce")
+    train_df = df[test_values == train_value].copy()
+    train_df["skeleton_group"] = (
+        train_df["entry"].astype(str).str.extract(r"^([A-E])", expand=False)
+    )
+    train_df = train_df.dropna(subset=["skeleton_group"]).copy()
+    if train_df.empty:
+        raise ValueError("No A-E training rows were found for the violin plot.")
+
+    contribution_cols = [column for _, column, _ in CONTRIBUTION_VIOLIN_COMPONENTS]
+    for column in contribution_cols:
+        train_df[column] = pd.to_numeric(train_df[column], errors="coerce")
+    train_df = train_df.dropna(subset=contribution_cols).copy()
+
+    ref_rows = train_df[train_df["InChIKey"] == ref_inchikey]
+    if ref_rows.empty:
+        raise ValueError(f"Reference InChIKey '{ref_inchikey}' was not found.")
+    ref_row = ref_rows.iloc[0]
+
+    for _, column, _ in CONTRIBUTION_VIOLIN_COMPONENTS:
+        train_df[f"{column}_delta"] = (
+            train_df[column].astype(float) - float(ref_row[column])
+        )
+    return train_df
+
+
+def _skeleton_contribution_summary(delta_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for group, group_df in delta_df.groupby("skeleton_group"):
+        for feature, column, _ in CONTRIBUTION_VIOLIN_COMPONENTS:
+            values = group_df[f"{column}_delta"].to_numpy(dtype=float)
+            rows.append(
+                {
+                    "group": group,
+                    "feature": feature,
+                    "n": len(values),
+                    "mean": float(np.mean(values)),
+                    "median": float(np.median(values)),
+                    "min": float(np.min(values)),
+                    "max": float(np.max(values)),
+                    "std": (
+                        float(np.std(values, ddof=1))
+                        if len(values) > 1
+                        else 0.0
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _skeleton_highlight_rows(delta_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    by_entry = delta_df.set_index("entry", drop=False)
+    column_by_feature = {
+        feature: column for feature, column, _ in CONTRIBUTION_VIOLIN_COMPONENTS
+    }
+    for feature, group, entry, reason in SKELETON_HIGHLIGHT_PICKS:
+        if entry not in by_entry.index:
+            continue
+        row = by_entry.loc[entry]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        column = column_by_feature[feature]
+        rows.append(
+            {
+                "feature": feature,
+                "group": group,
+                "entry": entry,
+                "name": row.get("name", ""),
+                "InChIKey": row.get("InChIKey", ""),
+                "value": float(row[f"{column}_delta"]),
+                "reason": reason,
+                "electronic_delta": float(row["electronic_cont_delta"]),
+                "electrostatic_delta": float(row["electrostatic_cont_delta"]),
+                "lumo_delta": float(row["lumo_cont_delta"]),
+                "ddg_expt": (
+                    float(row["ΔΔG.expt."])
+                    if "ΔΔG.expt." in row.index and pd.notna(row["ΔΔG.expt."])
+                    else np.nan
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _plot_skeleton_violin_grid(
+    delta_df: pd.DataFrame,
+    save_path: str | Path,
+    title: str,
+    highlights: pd.DataFrame | None = None,
+) -> None:
+    groups = [
+        group
+        for group in ["A", "B", "C", "D", "E"]
+        if (delta_df["skeleton_group"] == group).any()
+    ]
+    if not groups:
+        raise ValueError("No skeleton groups are available for plotting.")
+
+    all_values = np.concatenate(
+        [
+            delta_df[f"{column}_delta"].to_numpy(dtype=float)
+            for _, column, _ in CONTRIBUTION_VIOLIN_COMPONENTS
+        ]
+    )
+    all_values = all_values[np.isfinite(all_values)]
+    if all_values.size == 0:
+        raise ValueError("No finite contribution-difference values were found.")
+    x_lim = np.ceil(max(1.0, float(np.nanmax(np.abs(all_values)))) * 1.15)
+
+    fig_width = 7.4 if highlights is not None and not highlights.empty else 6.8
+    fig_height = 6.1 if highlights is not None and not highlights.empty else 5.8
+    fig, axes = plt.subplots(
+        nrows=3,
+        ncols=1,
+        figsize=(fig_width, fig_height),
+        sharex=True,
+        facecolor="white",
+    )
+    positions = np.arange(len(groups), 0, -1, dtype=float)
+    group_y = dict(zip(groups, positions))
+
+    label_offsets = {
+        ("Electronic", "A24"): (0.12, 0.20, "left"),
+        ("Electronic", "B6"): (-0.12, -0.20, "right"),
+        ("Electronic", "C3"): (-0.12, 0.20, "right"),
+        ("Electronic", "D11(trans)"): (-0.12, -0.20, "right"),
+        ("Electronic", "E2(exo)"): (-0.12, 0.20, "right"),
+        ("Electrostatic", "A12"): (-0.12, 0.20, "right"),
+        ("Electrostatic", "B5"): (-0.12, 0.20, "right"),
+        ("Electrostatic", "C10"): (0.12, -0.20, "left"),
+        ("Electrostatic", "D13(cis)"): (0.12, 0.20, "left"),
+        ("Electrostatic", "E3(exo)"): (0.12, 0.20, "left"),
+        ("LUMO", "A16"): (0.12, 0.20, "left"),
+        ("LUMO", "B5"): (0.12, 0.20, "left"),
+        ("LUMO", "C12"): (-0.12, 0.20, "right"),
+        ("LUMO", "D11(trans)"): (-0.12, -0.20, "right"),
+        ("LUMO", "E4"): (-0.12, 0.20, "right"),
+    }
+
+    for ax, (feature, column, feature_color) in zip(
+        axes,
+        CONTRIBUTION_VIOLIN_COMPONENTS,
+    ):
+        data = [
+            delta_df.loc[
+                delta_df["skeleton_group"] == group,
+                f"{column}_delta",
+            ].to_numpy(dtype=float)
+            for group in groups
+        ]
+        parts = ax.violinplot(
+            data,
+            positions=positions,
+            vert=False,
+            widths=0.72,
+            showmeans=False,
+            showmedians=True,
+            showextrema=False,
+        )
+        for body, group in zip(parts["bodies"], groups):
+            body.set_facecolor(SKELETON_GROUP_COLORS[group])
+            body.set_edgecolor(SKELETON_GROUP_COLORS[group])
+            body.set_alpha(0.20 if highlights is not None else 0.25)
+            body.set_linewidth(0.8)
+        parts["cmedians"].set_color("black")
+        parts["cmedians"].set_linewidth(1.1)
+
+        for pos, group in zip(positions, groups):
+            values = delta_df.loc[
+                delta_df["skeleton_group"] == group,
+                f"{column}_delta",
+            ].to_numpy(dtype=float)
+            if len(values) == 0:
+                continue
+            jitter = np.linspace(-0.18, 0.18, len(values))
+            if len(values) == 1:
+                jitter = np.array([0.0])
+            rng = np.random.default_rng(seed=100 + ord(group) + len(feature))
+            rng.shuffle(jitter)
+            ax.scatter(
+                values,
+                np.full(len(values), pos) + jitter,
+                s=13 if highlights is not None else 16,
+                color=SKELETON_GROUP_COLORS[group],
+                edgecolor="white",
+                linewidth=0.3 if highlights is not None else 0.35,
+                alpha=0.45 if highlights is not None else 0.78,
+                zorder=3,
+            )
+
+        if highlights is not None and not highlights.empty:
+            highlight_rows = highlights[highlights["feature"] == feature]
+            for _, row in highlight_rows.iterrows():
+                group = str(row["group"])
+                if group not in group_y:
+                    continue
+                entry = str(row["entry"])
+                value = float(row["value"])
+                y = group_y[group]
+                ax.scatter(
+                    value,
+                    y,
+                    s=42,
+                    color=SKELETON_GROUP_COLORS[group],
+                    edgecolor="black",
+                    linewidth=0.6,
+                    zorder=5,
+                )
+                dx, dy, ha = label_offsets.get(
+                    (feature, entry),
+                    (0.12 if value >= 0 else -0.12, 0.20, "left" if value >= 0 else "right"),
+                )
+                label = (
+                    entry.replace("(trans)", " trans")
+                    .replace("(cis)", " cis")
+                    .replace("(exo)", " exo")
+                )
+                ax.text(
+                    value + dx,
+                    y + dy,
+                    f"{label} {value:+.2f}",
+                    ha=ha,
+                    va="center",
+                    fontsize=6.7,
+                    color=SKELETON_GROUP_COLORS[group],
+                    zorder=6,
+                )
+
+        ax.axvline(0, color="gray", linestyle="--", linewidth=0.9, alpha=0.75)
+        ax.grid(True, axis="x", linestyle=":", linewidth=0.65, alpha=0.45)
+        ax.set_xlim(-x_lim, x_lim)
+        ax.set_yticks(positions)
+        ax.set_yticklabels(
+            [
+                f"{group}\n(n={len(data_i)})"
+                for group, data_i in zip(groups, data)
+            ]
+        )
+        ax.set_ylabel(
+            feature,
+            color=feature_color,
+            rotation=0,
+            ha="right",
+            va="center",
+            labelpad=58,
+        )
+        for spine in ["left", "right", "top"]:
+            ax.spines[spine].set_visible(False)
+
+    axes[0].set_title(title, fontsize=11)
+    axes[-1].set_xlabel("Contribution difference from benzophenone [kcal/mol]")
+    fig.tight_layout(h_pad=1.0)
+    save_path = _ensure_output_dir(save_path)
+    fig.savefig(save_path, dpi=500, bbox_inches="tight", pad_inches=0.06)
+    plt.close(fig)
+
+
+def plot_group_contribution_violins_by_skeleton(
+    df: pd.DataFrame,
+    save_path: str | Path,
+    highlighted_save_path: str | Path | None = None,
+    ref_inchikey: str = BENZOPHENONE_REF_INCHIKEY,
+    values_csv_path: str | Path | None = None,
+    summary_csv_path: str | Path | None = None,
+    highlights_csv_path: str | Path | None = None,
+    train_value: int = 0,
+) -> pd.DataFrame:
+    """Plot A-E skeleton-group violin plots for training contribution deltas.
+
+    Values are electronic/electrostatic/LUMO regression contributions shifted by
+    the benzophenone reference contribution. The function returns the compact
+    contribution-difference table used for plotting.
+    """
+    delta_df = _prepare_skeleton_contribution_delta(
+        df,
+        ref_inchikey=ref_inchikey,
+        train_value=train_value,
+    )
+    compact_columns = [
+        column
+        for column in [
+            "entry",
+            "name",
+            "SMILES",
+            "InChIKey",
+            "skeleton_group",
+            "ΔΔG.expt.",
+            "electronic_cont",
+            "electrostatic_cont",
+            "lumo_cont",
+            "electronic_cont_delta",
+            "electrostatic_cont_delta",
+            "lumo_cont_delta",
+        ]
+        if column in delta_df.columns
+    ]
+    compact_df = delta_df[compact_columns].copy()
+
+    if values_csv_path is not None:
+        compact_df.to_csv(_ensure_output_dir(values_csv_path), index=False)
+    if summary_csv_path is not None:
+        _skeleton_contribution_summary(delta_df).to_csv(
+            _ensure_output_dir(summary_csv_path),
+            index=False,
+        )
+
+    _plot_skeleton_violin_grid(
+        delta_df,
+        save_path,
+        "Contribution distributions by substrate-skeleton group",
+    )
+
+    highlights = _skeleton_highlight_rows(delta_df)
+    if highlights_csv_path is not None:
+        highlights.to_csv(_ensure_output_dir(highlights_csv_path), index=False)
+    if highlighted_save_path is not None:
+        _plot_skeleton_violin_grid(
+            delta_df,
+            highlighted_save_path,
+            "Characteristic points on substrate-skeleton contribution distributions",
+            highlights=highlights,
+        )
+
+    return compact_df
+
+
+def _mol_from_smiles_for_grid(smiles: object):
+    mol = Chem.MolFromSmiles(str(smiles))
+    if mol is not None:
+        Chem.rdDepictor.Compute2DCoords(mol)
+    return mol
+
+
+def plot_group_contribution_skeleton_highlight_structures(
+    df: pd.DataFrame,
+    save_path: str | Path,
+    ref_inchikey: str = BENZOPHENONE_REF_INCHIKEY,
+    train_value: int = 0,
+    mols_per_row: int = 5,
+    sub_img_size: tuple[int, int] = (520, 430),
+    legend_font_size: int = 28,
+    legend_fraction: float = 0.24,
+) -> pd.DataFrame:
+    """Draw structures corresponding to the highlighted skeleton violin points."""
+    if "SMILES" not in df.columns:
+        raise ValueError("DataFrame must contain column 'SMILES'.")
+
+    delta_df = _prepare_skeleton_contribution_delta(
+        df,
+        ref_inchikey=ref_inchikey,
+        train_value=train_value,
+    )
+    highlights = _skeleton_highlight_rows(delta_df)
+    if highlights.empty:
+        raise ValueError("No highlighted skeleton rows were available.")
+
+    smiles_by_entry = delta_df.set_index("entry")["SMILES"].to_dict()
+    highlights["SMILES"] = highlights["entry"].map(smiles_by_entry)
+    highlights["feature_order"] = highlights["feature"].map(
+        {"Electronic": 0, "Electrostatic": 1, "LUMO": 2}
+    )
+    highlights["group_order"] = highlights["group"].map(
+        {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+    )
+    highlights = highlights.sort_values(["feature_order", "group_order"]).copy()
+
+    mols = [_mol_from_smiles_for_grid(smiles) for smiles in highlights["SMILES"]]
+    legends = [
+        (
+            f"{row['feature']} / group {row['group']}\n"
+            f"{row['entry']}: {row['value']:+.2f} kcal/mol\n"
+            f"{row['name']}"
+        )
+        for _, row in highlights.iterrows()
+    ]
+    image = Draw.MolsToGridImage(
+        mols,
+        molsPerRow=mols_per_row,
+        subImgSize=sub_img_size,
+        legends=legends,
+        useSVG=False,
+        legendFontSize=legend_font_size,
+        legendFraction=legend_fraction,
+    )
+    save_path = _ensure_output_dir(save_path)
+    image.save(save_path)
+    return highlights
+
+
 def _draw_horizontal_arrow(
     ax,
     base: float,
@@ -716,13 +1340,22 @@ def _draw_horizontal_arrow(
 def plot_pair_stacked_contributions(
     df: pd.DataFrame,
     target_inchikey: str,
-    ref_inchikey: str,
+    ref_inchikey: str | None,
     save_path: str,
+    baseline: str = "reference",
+    mean_scope: str = "train",
+    train_value: int = 0,
 ) -> None:
     """
-    For two InChIKeys (target and ref), plot the contribution differences
-        (target - ref)
-    of electronic / electrostatic / lumo as horizontally stacked arrows.
+    Plot component contribution differences for one target molecule.
+
+    Baseline modes
+    --------------
+    - ``baseline="reference"``: target - reference InChIKey contribution.
+      This is the original behavior and requires ``ref_inchikey``.
+    - ``baseline="mean"``: target - mean contribution. By default, the mean is
+      computed from training rows (``test == train_value``); set
+      ``mean_scope="all"`` to use all rows.
 
     Arrow structure (from top to bottom):
         - top   : arrow from 0 to electronic
@@ -758,16 +1391,17 @@ def plot_pair_stacked_contributions(
         if col not in df.columns:
             raise ValueError(f"DataFrame must contain column '{col}'.")
 
-    # --- fetch rows for target and reference ---
+    if baseline not in {"reference", "mean"}:
+        raise ValueError("baseline must be either 'reference' or 'mean'.")
+    if mean_scope not in {"train", "all"}:
+        raise ValueError("mean_scope must be either 'train' or 'all'.")
+
+    # --- fetch target row and baseline contribution values ---
     if target_inchikey not in df["InChIKey"].values:
         raise ValueError(f"target_inchikey '{target_inchikey}' was not found in DataFrame.")
-    if ref_inchikey not in df["InChIKey"].values:
-        raise ValueError(f"ref_inchikey '{ref_inchikey}' was not found in DataFrame.")
 
     row_target = df[df["InChIKey"] == target_inchikey].iloc[0]
-    row_ref    = df[df["InChIKey"] == ref_inchikey].iloc[0]
 
-    # contributions (target - ref)
     target_vals = np.array(
         [
             float(row_target["electronic_cont"]),
@@ -775,14 +1409,41 @@ def plot_pair_stacked_contributions(
             float(row_target["lumo_cont"]),
         ]
     )
-    ref_vals = np.array(
-        [
-            float(row_ref["electronic_cont"]),
-            float(row_ref["electrostatic_cont"]),
-            float(row_ref["lumo_cont"]),
-        ]
-    )
-    contrib = target_vals - ref_vals
+
+    if baseline == "reference":
+        if ref_inchikey is None:
+            raise ValueError("ref_inchikey is required when baseline='reference'.")
+        if ref_inchikey not in df["InChIKey"].values:
+            raise ValueError(f"ref_inchikey '{ref_inchikey}' was not found in DataFrame.")
+        row_ref = df[df["InChIKey"] == ref_inchikey].iloc[0]
+        baseline_vals = np.array(
+            [
+                float(row_ref["electronic_cont"]),
+                float(row_ref["electrostatic_cont"]),
+                float(row_ref["lumo_cont"]),
+            ]
+        )
+        x_label = "Contribution difference from reference [kcal/mol]"
+    else:
+        baseline_df = df
+        if mean_scope == "train":
+            if "test" not in df.columns:
+                raise ValueError("DataFrame must contain column 'test' when mean_scope='train'.")
+            test_values = pd.to_numeric(df["test"], errors="coerce")
+            baseline_df = df[test_values == train_value]
+        baseline_df = baseline_df.dropna(
+            subset=["electronic_cont", "electrostatic_cont", "lumo_cont"]
+        )
+        if baseline_df.empty:
+            raise ValueError("No rows were available to compute the mean baseline.")
+        baseline_vals = baseline_df[
+            ["electronic_cont", "electrostatic_cont", "lumo_cont"]
+        ].to_numpy(dtype=float).mean(axis=0)
+        x_label = "Contribution difference from training mean [kcal/mol]"
+        if mean_scope == "all":
+            x_label = "Contribution difference from dataset mean [kcal/mol]"
+
+    contrib = target_vals - baseline_vals
     elec, es, lumo = contrib
 
     # cumulative positions
@@ -903,7 +1564,7 @@ def plot_pair_stacked_contributions(
     annotate_value(lumo, y_lumo)
 
     # x-axis label
-    ax.set_xlabel("Contribution [kcal/mol]")
+    ax.set_xlabel(x_label)
 
     # ticks only at 0 and total (s3)
     xticks = sorted(set([0.0, s3]))
@@ -940,6 +1601,311 @@ def plot_pair_stacked_contributions(
 
     fig.savefig(save_path, dpi=400)
     plt.close(fig)
+
+
+def _safe_entry_filename(entry: str) -> str:
+    name = (
+        entry.replace("(trans)", "_trans")
+        .replace("(cis)", "_cis")
+        .replace("(exo)", "_exo")
+    )
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
+
+
+def plot_selected_contribution_breakdowns(
+    df: pd.DataFrame,
+    output_dir: str | Path = "data/validation",
+    entries: tuple[str, ...] = SELECTED_CONTRIBUTION_BREAKDOWN_ENTRIES,
+    ref_inchikey: str = BENZOPHENONE_REF_INCHIKEY,
+) -> pd.DataFrame:
+    """Plot benzophenone-referenced contribution breakdowns for selected entries."""
+    required_cols = ["entry", "name", "InChIKey"]
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"DataFrame must contain column '{col}'.")
+
+    output_dir = Path(output_dir)
+    rows: list[dict[str, object]] = []
+    by_entry = df.set_index("entry", drop=False)
+    for entry in entries:
+        if entry not in by_entry.index:
+            raise ValueError(f"entry '{entry}' was not found in DataFrame.")
+        row = by_entry.loc[entry]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        save_path = output_dir / f"{_safe_entry_filename(entry)}_contribution_breakdown.png"
+        plot_pair_stacked_contributions(
+            df,
+            target_inchikey=str(row["InChIKey"]),
+            ref_inchikey=ref_inchikey,
+            save_path=str(save_path),
+        )
+        rows.append(
+            {
+                "entry": entry,
+                "name": row["name"],
+                "InChIKey": row["InChIKey"],
+                "save_path": str(save_path),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def plot_component_contribution_series(
+    df: pd.DataFrame,
+    component: str,
+    entries: list[str],
+    reference_entry: str,
+    save_path: str | Path,
+    title: str,
+    *,
+    contribution_column: str | None = None,
+    target_column: str = "ΔΔG.expt.",
+    highlighted_names: tuple[str, ...] = (),
+    highlighted_labels: dict[str, str] | None = None,
+    series_label: str = "Series",
+    highlight_label: str = "Highlighted substrates",
+) -> pd.DataFrame:
+    """Plot experimental energy changes against one contribution component.
+
+    Entries are compared with ``reference_entry``.  Named substrates can be
+    overlaid with a distinct marker, which is useful when extending a series
+    with structurally related training examples that have separate IDs.
+    """
+    contribution_column = contribution_column or f"{component}_contribution"
+    required = {"entry", "name", contribution_column, target_column}
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        raise ValueError(f"DataFrame is missing required columns: {', '.join(missing)}")
+
+    highlighted_labels = highlighted_labels or {}
+    selected = df["entry"].astype(str).isin(entries) | df["name"].isin(highlighted_names)
+    subset = df.loc[selected].copy()
+    reference_rows = subset.loc[subset["entry"].astype(str).eq(reference_entry)]
+    if reference_rows.empty:
+        raise ValueError(f"Reference entry '{reference_entry}' was not found in the selected data.")
+
+    reference = reference_rows.iloc[0]
+    x_column = "contribution_change"
+    y_column = "experimental_change"
+    subset[x_column] = subset[contribution_column] - float(reference[contribution_column])
+    subset[y_column] = subset[target_column] - float(reference[target_column])
+    points = subset.loc[subset["entry"].astype(str).ne(reference_entry)].copy()
+    if len(points) < 3:
+        raise ValueError("At least three non-reference points are required for a component series plot.")
+
+    slope, intercept = np.polyfit(points[x_column], points[y_column], 1)
+    correlation = float(np.corrcoef(points[x_column], points[y_column])[0, 1])
+    highlighted = points["name"].isin(highlighted_names)
+    base_points = points.loc[~highlighted]
+    highlighted_points = points.loc[highlighted]
+
+    fig, ax = plt.subplots(figsize=(5.3, 4.2))
+    ax.axhline(0, color="0.7", linewidth=0.8)
+    ax.axvline(0, color="0.7", linewidth=0.8)
+    ax.scatter(
+        base_points[x_column], base_points[y_column], color="#4e79a7", s=48,
+        edgecolors="black", linewidths=0.5, zorder=3, label=series_label,
+    )
+    if not highlighted_points.empty:
+        ax.scatter(
+            highlighted_points[x_column], highlighted_points[y_column],
+            color="#f28e2b", marker="D", s=62, edgecolors="black",
+            linewidths=0.55, zorder=4, label=highlight_label,
+        )
+    ax.scatter([0], [0], marker="*", color="black", s=82, zorder=5)
+    for _, row in points.iterrows():
+        label = highlighted_labels.get(str(row["name"]), str(row["entry"]))
+        ax.annotate(label, (row[x_column], row[y_column]), xytext=(4, 3), textcoords="offset points", fontsize=7.5)
+
+    x_line = np.linspace(float(points[x_column].min()) - 0.08, float(points[x_column].max()) + 0.08, 100)
+    ax.plot(x_line, slope * x_line + intercept, color="0.2", linewidth=1.1)
+    ax.text(0.04, 0.96, rf"$R^2$ = {correlation ** 2:.2f}, $n$ = {len(points)}", transform=ax.transAxes, va="top", fontsize=10)
+    ax.set(
+        title=title,
+        xlabel=f"{component.capitalize()} contribution change vs {reference_entry} [kcal/mol]",
+        ylabel=rf"Experimental $\Delta\Delta G^\ddagger$ change vs {reference_entry} [kcal/mol]",
+    )
+    if not highlighted_points.empty:
+        ax.legend(frameon=False, fontsize=8, loc="best")
+    ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.4)
+    fig.tight_layout()
+    fig.savefig(_ensure_output_dir(save_path), dpi=500)
+    plt.close(fig)
+    return subset
+
+
+def save_non_diketone_test_predictions(
+    df: pd.DataFrame,
+    save_path: str | Path = "data/validation/non_diketone_test_predictions.csv",
+    train_value: int = 0,
+) -> pd.DataFrame:
+    """Save non-diketone holdout predictions such as Dxx and H-series substrates."""
+    required_cols = ["entry", "name", "InChIKey", "ΔΔG.expt.", "test", "prediction"]
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"DataFrame must contain column '{col}'.")
+
+    entry = df["entry"].astype(str)
+    test_values = pd.to_numeric(df["test"], errors="coerce")
+    mask = (test_values != train_value) & ~entry.str.match(r"^[a-f]\d+$", na=False)
+    columns = [
+        "entry",
+        "name",
+        "InChIKey",
+        "ΔΔG.expt.",
+        "prediction",
+        "prediction_error",
+        "electronic_cont",
+        "electrostatic_cont",
+        "lumo_cont",
+    ]
+    output = df.loc[mask, [col for col in columns if col in df.columns]].copy()
+    output.to_csv(_ensure_output_dir(save_path), index=False)
+    return output
+
+
+DIKETONE_ENTRY_ORDER = ("1", "2", "3", "4", "13", "14", "23", "24", "31", "32", "41", "42")
+DIKETONE_TEMPERATURES = {
+    "a": 273.15,
+    "b": 298.15,
+    "c": 298.15,
+    "d": 298.15,
+    "e": 298.15,
+    "f": 298.15,
+}
+DIKETONE_INITIAL_EXPECTED = {"a": "2", "b": "1", "c": "2", "d": "1", "e": "2", "f": "1"}
+DIKETONE_FINAL_EXPECTED = {"a": "2-4", "e": "2-3"}
+
+
+def _diketone_rate(delta_g: float, temperature: float) -> float:
+    return float(np.exp(-delta_g / (1.987e-3 * temperature)))
+
+
+def _simulate_diketone_selectivity(
+    pred_by_entry: dict[str, float],
+    group: str,
+) -> dict[str, dict[str, float]]:
+    temperature = DIKETONE_TEMPERATURES[group]
+    ordered = [pred_by_entry[f"{group}{suffix}"] for suffix in DIKETONE_ENTRY_ORDER]
+    (
+        k1,
+        k2,
+        k3,
+        k4,
+        k13p,
+        k14p,
+        k23p,
+        k24p,
+        k31p,
+        k32p,
+        k41p,
+        k42p,
+    ) = [_diketone_rate(value, temperature) for value in ordered]
+
+    k1p_sum = k13p + k14p
+    k2p_sum = k23p + k24p
+    k3p_sum = k31p + k32p
+    k4p_sum = k41p + k42p
+    ka = k1 + k2 + k3 + k4
+    max_rate = max(k1, k2, k3, k4, k13p, k14p, k23p, k24p, k31p, k32p, k41p, k42p)
+    time_points = np.logspace(-10, 10, 1000) / max_rate
+
+    def intermediate(k_i: float, k_ip_sum: float, time_value: float) -> float:
+        denom = k_ip_sum - ka
+        if abs(denom) < 1e-300:
+            return 0.0
+        return k_i / denom * (np.exp(-ka * time_value) - np.exp(-k_ip_sum * time_value))
+
+    def final_product(k_i: float, k_ijp: float, k_ip_sum: float, time_value: float) -> float:
+        denom = k_ip_sum - ka
+        if abs(denom) < 1e-300:
+            return 0.0
+        term1 = (1 - np.exp(-ka * time_value)) / ka
+        term2 = (1 - np.exp(-k_ip_sum * time_value)) / k_ip_sum
+        return k_i * k_ijp / denom * (term1 - term2)
+
+    p1 = np.array([intermediate(k1, k1p_sum, t) for t in time_points])
+    p2 = np.array([intermediate(k2, k2p_sum, t) for t in time_points])
+    p3 = np.array([intermediate(k3, k3p_sum, t) for t in time_points])
+    p4 = np.array([intermediate(k4, k4p_sum, t) for t in time_points])
+    max_index = int(np.argmax(p1 + p2 + p3 + p4))
+    intermediate_abs = {
+        "1": float(p1[max_index] * 100),
+        "2": float(p2[max_index] * 100),
+        "3": float(p3[max_index] * 100),
+        "4": float(p4[max_index] * 100),
+    }
+
+    final_abs = {
+        "1-3": (
+            final_product(k1, k13p, k1p_sum, time_points[-1])
+            + final_product(k3, k31p, k3p_sum, time_points[-1])
+        )
+        * 100,
+        "1-4": (
+            final_product(k1, k14p, k1p_sum, time_points[-1])
+            + final_product(k4, k41p, k4p_sum, time_points[-1])
+        )
+        * 100,
+        "2-3": (
+            final_product(k2, k23p, k2p_sum, time_points[-1])
+            + final_product(k3, k32p, k3p_sum, time_points[-1])
+        )
+        * 100,
+        "2-4": (
+            final_product(k2, k24p, k2p_sum, time_points[-1])
+            + final_product(k4, k42p, k4p_sum, time_points[-1])
+        )
+        * 100,
+    }
+    final_total = sum(final_abs.values())
+    final_frac = {label: float(value / final_total * 100) for label, value in final_abs.items()}
+    return {"intermediate_abs": intermediate_abs, "final_frac": final_frac}
+
+
+def save_diketone_selectivity_summary(
+    df: pd.DataFrame,
+    save_path: str | Path = "data/test/selectivity_summary.csv",
+) -> pd.DataFrame:
+    """Save the eight manuscript diketone selectivity checks."""
+    pred_by_entry = {
+        str(entry): float(value)
+        for entry, value in zip(df["entry"].astype(str), df["prediction"])
+        if str(entry)[:1] in set("abcdef") and pd.notna(value)
+    }
+
+    rows: list[dict[str, object]] = []
+    for group, expected in DIKETONE_INITIAL_EXPECTED.items():
+        values = _simulate_diketone_selectivity(pred_by_entry, group)["intermediate_abs"]
+        predicted = max(values, key=values.get)
+        rows.append(
+            {
+                "group": group,
+                "stage": "initial",
+                "expected": expected,
+                "predicted": predicted,
+                "ok": predicted == expected,
+                "target_percent": values[expected],
+            }
+        )
+    for group, expected in DIKETONE_FINAL_EXPECTED.items():
+        values = _simulate_diketone_selectivity(pred_by_entry, group)["final_frac"]
+        predicted = max(values, key=values.get)
+        rows.append(
+            {
+                "group": group,
+                "stage": "final",
+                "expected": expected,
+                "predicted": predicted,
+                "ok": predicted == expected,
+                "target_percent": values[expected],
+            }
+        )
+
+    summary = pd.DataFrame(rows)
+    summary.to_csv(_ensure_output_dir(save_path), index=False)
+    return summary
 
 
 def make_cube(df, path):
@@ -1419,10 +2385,6 @@ def reaction_concentration_plot_complex(
     a0=100,
     save_path="simulation_complex.png",
 ):
-    # Physical constants.
-    kB = 1.380649e-23  # [J/K]
-    h  = 6.62607015e-34  # [J·s]
-    R  = 1.987e-3        # [kcal/(mol·K)]
     """
     Plot concentration profiles for a branched reaction network.
 
@@ -1431,16 +2393,27 @@ def reaction_concentration_plot_complex(
         - ΔG1..ΔG4 for A -> Pi
         - ΔG13p, ΔG14p, ΔG23p, ΔG24p, ΔG31p, ΔG32p, ΔG41p, ΔG42p for Pi -> Pij'
     """
+    # Physical constant. The Eyring prefactor is intentionally omitted below:
+    # multiplying every rate by the same factor only rescales time and does not
+    # change the concentration profile plotted against reaction progress.
+    R = 1.987e-3  # [kcal/(mol K)]
 
-    # Eyring equation.
-    def k(ΔG):
-        return (kB * T / h) * np.exp(-ΔG / (R * T))
+    delta_g = np.asarray(ΔGs, dtype=float)
+    if delta_g.size != 12:
+        raise ValueError("ΔGs must contain 12 activation free energies.")
+    if not np.all(np.isfinite(delta_g)):
+        raise ValueError("ΔGs contains non-finite values.")
 
+    # Numerically stable relative Eyring rates. Very favorable barriers can
+    # otherwise overflow in exp(-ΔG/RT), while only rate ratios matter here.
+    log_rates = -delta_g / (R * T)
+    log_rates = log_rates - np.max(log_rates)
+    rates = np.exp(np.clip(log_rates, -745.0, 0.0))
     (
         k1, k2, k3, k4,
         k13p, k14p, k23p, k24p,
         k31p, k32p, k41p, k42p
-    ) = [k(ΔG) for ΔG in ΔGs]
+    ) = rates
 
     # Intermediate decomposition rates.
     k1p_sum = k13p + k14p
@@ -1449,17 +2422,48 @@ def reaction_concentration_plot_complex(
     k4p_sum = k41p + k42p
     ka = k1 + k2 + k3 + k4
 
-    # Time grid.
-    t = np.logspace(
-        -10, 10, 1000, base=10
-    ) / np.max([k1, k2, k3, k4, k13p, k14p, k23p, k24p, k31p, k32p, k41p, k42p])
+    positive_rates = rates[rates > 0]
+    if positive_rates.size == 0 or ka <= 0:
+        raise ValueError("All kinetic rates are zero after scaling.")
+
+    # Sample around every kinetic timescale so both very fast and very slow
+    # follow-up reductions remain visible after the rate scaling.
+    base_times = np.logspace(-8, 8, 900, base=10)
+    t_values = [np.array([0.0])]
+    for rate in positive_rates:
+        t_values.append(base_times / rate)
+    t = np.unique(np.concatenate(t_values))
+    t = t[np.isfinite(t)]
+    t.sort()
+
+    def exp_decay(rate):
+        if rate <= 0:
+            return np.ones_like(t)
+        return np.exp(-np.clip(rate * t, 0.0, 745.0))
+
+    def one_minus_exp_over_rate(rate):
+        if rate <= 0:
+            return t.copy()
+        return -np.expm1(-np.clip(rate * t, 0.0, 745.0)) / rate
+
+    def safe_species(values):
+        values = np.nan_to_num(values, nan=0.0, posinf=a0, neginf=0.0)
+        return np.clip(values, 0.0, a0)
 
     # Concentration of A.
-    a = a0 * np.exp(-ka * t)
+    a = a0 * exp_decay(ka)
 
     # Intermediate concentrations Pi.
     def p_i(k_i, k_ip_sum):
-        return (k_i * a0 / (k_ip_sum - ka)) * (np.exp(-ka * t) - np.exp(-k_ip_sum * t))
+        if k_i <= 0:
+            return np.zeros_like(t)
+        scale = max(abs(k_ip_sum), abs(ka), 1.0)
+        if abs(k_ip_sum - ka) <= 1e-10 * scale:
+            return safe_species(k_i * a0 * t * exp_decay(ka))
+        return safe_species(
+            (k_i * a0 / (k_ip_sum - ka))
+            * (exp_decay(ka) - exp_decay(k_ip_sum))
+        )
 
     p1 = p_i(k1, k1p_sum)
     p2 = p_i(k2, k2p_sum)
@@ -1469,14 +2473,27 @@ def reaction_concentration_plot_complex(
     p_intermediate_total = p1 + p2 + p3 + p4
 
     # Time where total intermediate concentration is maximal.
-    t_max_idx = np.argmax(p_intermediate_total)
+    t_max_idx = np.nanargmax(p_intermediate_total)
     t_max = t[t_max_idx]
 
     # Product concentrations Pij'.
     def pij_total(k_i, k_ijp, k_ip_sum):
-        term1 = (1 - np.exp(-ka * t)) / ka
-        term2 = (1 - np.exp(-k_ip_sum * t)) / k_ip_sum
-        return (k_i * k_ijp * a0 / (k_ip_sum - ka)) * (term1 - term2)
+        if k_i <= 0 or k_ijp <= 0:
+            return np.zeros_like(t)
+        scale = max(abs(k_ip_sum), abs(ka), 1.0)
+        if abs(k_ip_sum - ka) <= 1e-10 * scale:
+            if ka <= 0:
+                return np.zeros_like(t)
+            integral = (
+                1.0
+                - exp_decay(ka) * (1.0 + ka * t)
+            ) / (ka * ka)
+            return safe_species(k_i * k_ijp * a0 * integral)
+        term1 = one_minus_exp_over_rate(ka)
+        term2 = one_minus_exp_over_rate(k_ip_sum)
+        return safe_species(
+            (k_i * k_ijp * a0 / (k_ip_sum - ka)) * (term1 - term2)
+        )
 
     # Mapping:
     #  p13 ↔ (1,3), p14 ↔ (1,4), p23 ↔ (2,3), p24 ↔ (2,4)
@@ -1489,6 +2506,17 @@ def reaction_concentration_plot_complex(
 
     # Reaction progress.
     progress = p1 / 2 + p2 / 2 + p3 / 2 + p4 / 2 + pp_total
+    progress = np.nan_to_num(progress, nan=0.0, posinf=a0, neginf=0.0)
+    progress = np.maximum.accumulate(progress)
+    if a0 > 0:
+        progress = np.clip(progress / a0, 0.0, 1.0)
+        p1, p2, p3, p4, p13, p14, p23, p24 = [
+            np.clip(values / a0, 0.0, 1.0)
+            for values in (p1, p2, p3, p4, p13, p14, p23, p24)
+        ]
+        p_intermediate_total = np.clip(p1 + p2 + p3 + p4, 0.0, 1.0)
+        pp_total = np.clip(p13 + p14 + p23 + p24, 0.0, 1.0)
+        a = np.clip(a / a0, 0.0, 1.0)
 
     # Report p1-p4 values at t_max.
     print("At t_max (intermediate total maximum):")
@@ -1682,13 +2710,30 @@ if __name__ == '__main__':
     evaluate_result(f"data/data_electronic_electrostatic_lumo_regression.pkl")
 
     df=best_parameter("data/data_electronic_electrostatic_lumo_results.csv")#highlight_colors={"DSSYKIVIOFKYAU-MHPPCMCBSA-N":"1","UMJJFEIKYGFCAT-HOSYLAQJSA-N":"2","YKFKEYKJGVSEIX-KWYDOPHBSA-N":"3"}
+    save_non_diketone_test_predictions(df, "data/validation/non_diketone_test_predictions.csv")
+    save_diketone_selectivity_summary(df, "data/test/selectivity_summary.csv")
+    plot_training_contribution_numberlines(df, "data/validation/training_contribution_numberlines.png")
+    plot_group_contribution_violins_by_skeleton(
+        df,
+        "data/validation/group_contribution_violins_by_skeleton.png",
+        highlighted_save_path="data/validation/group_contribution_violins_by_skeleton_highlighted.png",
+        values_csv_path="data/validation/group_contribution_distribution_values.csv",
+        summary_csv_path="data/validation/group_contribution_distribution_summary.csv",
+        highlights_csv_path="data/validation/group_contribution_skeleton_highlights.csv",
+    )
+    plot_group_contribution_skeleton_highlight_structures(
+        df,
+        "data/validation/group_contribution_skeleton_highlight_structures.png",
+    )
+    plot_selected_contribution_breakdowns(df, "data/validation")
     plot_3d_contributions(df, "data/validation/contributions_3d.png", highlight_colors={"RWCCWEUUXYIKHB-KHWBWMQUSA-N":""}, ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N")
     plot_contribution_bars(df,inchikeys=["DSSYKIVIOFKYAU-MHPPCMCBSA-N","UMJJFEIKYGFCAT-HOSYLAQJSA-N","YKFKEYKJGVSEIX-KWYDOPHBSA-N"],labels=["1","2","3"],ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/contribution_bars.png")
     plot_pair_stacked_contributions(df, target_inchikey="DSSYKIVIOFKYAU-MHPPCMCBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/DSSYKIVIOFKYAU-MHPPCMCBSA-N.png")
     plot_pair_stacked_contributions(df, target_inchikey="UMJJFEIKYGFCAT-HOSYLAQJSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/UMJJFEIKYGFCAT-HOSYLAQJSA-N.png")
     plot_pair_stacked_contributions(df, target_inchikey="YKFKEYKJGVSEIX-KWYDOPHBSA-N", ref_inchikey="RWCCWEUUXYIKHB-KHWBWMQUSA-N", save_path="data/validation/YKFKEYKJGVSEIX-KWYDOPHBSA-N.png")
+
     plot_loocv_metrics("data/data_electronic_electrostatic_lumo_results.csv", "data/validation/loocv_metrics.png")
-    
+
     out_path = CONTRIBUTIONS_ROOT
     make_cube(df,out_path)
     # make_cube_with_sign_markers(df,out_path)
