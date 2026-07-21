@@ -11,13 +11,23 @@ This module provides utilities to:
 from itertools import product
 from multiprocessing import Pool
 from pathlib import Path
-import glob
 import os
 import re
 
 import numpy as np
 import pandas as pd
 import cclib
+
+try:
+    from .current_model_support.conformer_helpers import (
+        conformer_id_from_path,
+        discover_conformer_logs,
+    )
+except ImportError:  # Support direct execution as ``python libs/calc_grid.py``.
+    from current_model_support.conformer_helpers import (  # type: ignore[no-redef]
+        conformer_id_from_path,
+        discover_conformer_logs,
+    )
 
 
 def _positive_int_from_env(name: str, default: int) -> int:
@@ -32,7 +42,10 @@ def _positive_int_from_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
-OUTPUT_ROOT = os.path.join(os.path.expanduser("~"), "molecules")
+OUTPUT_ROOT = os.getenv(
+    "MOLECULES_ROOT",
+    os.path.join(os.path.expanduser("~"), "molecules"),
+)
 NUM_WORKERS = _positive_int_from_env("GRID_NUM_WORKERS", os.cpu_count() or 1)
 
 # Descriptor settings selected from the 2026-06 model search:
@@ -56,17 +69,24 @@ LUMO_PLUS1_COMBINE_MODE = os.getenv("GRID_LUMO_PLUS1_COMBINE_MODE", "additive").
 DIKETONE_INITIAL_ENTRY_RE = re.compile(r"^[a-f][1-4]$")
 
 
-def _lumo_plus1_path(log: str) -> str:
-    """Return the LUMO+1 cube path matching an opt*.log file."""
+def _cube_path(log: str, prefix: str) -> str:
+    """Return ``<prefix><conformer-id>.cube`` beside an ``opt<id>.log`` file."""
     log_path = Path(log)
-    conf_id = log_path.stem.replace("opt", "", 1)
+    conf_id = conformer_id_from_path(log_path)
+    return str(log_path.with_name(f"{prefix}{conf_id}.cube"))
+
+
+def _lumo_plus1_path(log: str) -> str:
+    """Return the LUMO+1 cube path matching an ``opt<id>.log`` file."""
+    log_path = Path(log)
+    conf_id = conformer_id_from_path(log_path)
     return str(log_path.with_name(f"LUMO+1_{conf_id}.cube"))
 
 
 def _sp_log_path(log: str) -> str:
-    """Return the single-point log path matching an opt*.log file."""
+    """Return the single-point log path matching an ``opt<id>.log`` file."""
     log_path = Path(log)
-    conf_id = log_path.stem.replace("opt", "", 1)
+    conf_id = conformer_id_from_path(log_path)
     return str(log_path.with_name(f"sp{conf_id}.log"))
 
 
@@ -121,11 +141,13 @@ def calc_grid__(
     log : str
         Path to the Gaussian log file (optimization log). The corresponding cube files
         are inferred by:
-        - Dt cube : log.replace("opt", "Dt").replace(".log", ".cube")
-        - ESP cube: log.replace("opt", "ESP").replace(".log", ".cube")
-        - LUMO cube: log.replace("opt", "LUMO").replace(".log", ".cube")
+        - Dt cube: ``Dt<id>.cube``
+        - ESP cube: ``ESP<id>.cube``
+        - LUMO cube: ``LUMO<id>.cube``
     T : float
         Temperature [K]. Used to compute a Gibbs-like weight from the cclib thermochemistry.
+    use_lumo_plus1 : bool
+        Also read ``LUMO+1_<id>.cube`` and compute its SP-energy mixing weight.
 
     Returns
     -------
@@ -149,12 +171,14 @@ def calc_grid__(
     """
     # Parse thermochemistry from log
     data = cclib.io.ccread(log)
+    if data is None or not hasattr(data, "enthalpy") or not hasattr(data, "entropy"):
+        raise ValueError(f"Failed to read thermochemistry from {log}")
     weight = data.enthalpy - data.entropy * T
 
     # Infer cube file paths
-    dt_path = log.replace("opt", "Dt").replace(".log", ".cube")
-    esp_path = log.replace("opt", "ESP").replace(".log", ".cube")
-    lumo_path = log.replace("opt", "LUMO").replace(".log", ".cube")
+    dt_path = _cube_path(log, "Dt")
+    esp_path = _cube_path(log, "ESP")
+    lumo_path = _cube_path(log, "LUMO")
 
     # ----- Read Dt cube (reference for grid geometry) -----
     with open(dt_path, "r", encoding="UTF-8") as f:
@@ -186,7 +210,7 @@ def calc_grid__(
         coord = ijk @ axis + origin
 
         # Skip atomic lines｀
-        for _ in range(n_atom):
+        for _ in range(abs(n_atom)):
             f.readline()
 
         # Read Dt values
@@ -195,7 +219,7 @@ def calc_grid__(
     # ----- Read ESP cube -----
     with open(esp_path, "r", encoding="UTF-8") as f:
         # Skip header + atomic lines
-        for _ in range(6 + n_atom):
+        for _ in range(6 + abs(n_atom)):
             f.readline()
         esp_values = np.fromstring(f.read(), dtype=float, sep=" ").reshape(-1, 1)
 
@@ -226,7 +250,7 @@ def calc_grid(
     folded: int,
     use_lumo_plus1: bool = False,
 ) -> pd.Series:
-    """Aggregate weighted grid values for all opt*.log files under a directory.
+    """Aggregate weighted grid values for all ``opt<digits>.log`` files.
 
     For each log/cube set in `path`, this function:
     1. Extracts grid data and Gibbs-like weights via :func:`calc_grid__`.
@@ -240,12 +264,15 @@ def calc_grid(
     Parameters
     ----------
     path : str
-        Directory containing Gaussian log files named like `opt*.log`. For each log,
-        corresponding cube files are assumed to exist in the same directory.
+        Directory containing Gaussian log files named exactly
+        ``opt<digits>.log``. Corresponding cubes must be in the same directory.
     T : float
         Temperature [K], used in the Boltzmann factors `exp(-ΔG / (3.1668114e-6 * T))`.
     folded : int
         Factor for the z-coordinate (e.g., 1 or -1) applied before folding.
+    use_lumo_plus1 : bool
+        Include the configured energy-weighted LUMO+1 term for initial
+        diketone reductions.
 
     Returns
     -------
@@ -269,22 +296,25 @@ def calc_grid(
     - ESP is masked by the original electronic density with
       ``ESP_DENSITY_MASK_THRESHOLD``.
     - Fields are optionally tapered to zero at ``GRID_RADIUS``.
-    - Coordinates are scaled by ``GRID_STEP``, then rounded to the nearest integer
+    - Coordinates are scaled by ``GRID_STEP``, then rounded away from zero
       (ceil for positive, floor for negative).
     - Folding is applied by taking the absolute value of y (mirror in y) and
       multiplying z by `folded`.
     """
     grids = []
     weights = []
+    failures: list[tuple[str, str]] = []
 
     # Loop over optimization logs
-    for log in glob.glob(f"{path}/opt*.log"):
+    for log_path in discover_conformer_logs(path):
+        log = str(log_path)
         try:
             df, weight, lumo_plus1_weight = calc_grid__(log, T, use_lumo_plus1)
             print(f"PARSING SUCCESS {log}")
         except Exception as e:  # noqa: BLE001
             print(f"PARSING FAILURE {log}")
             print(e)
+            failures.append((log, str(e)))
             continue
 
         # Restrict to points within the selected radial cutoff, if enabled.
@@ -345,9 +375,14 @@ def calc_grid(
         grids.append(df.copy())
         weights.append(weight)
 
+    if failures:
+        details = "\n".join(f"- {log}: {error}" for log, error in failures)
+        raise RuntimeError(
+            "One or more conformers failed descriptor parsing; refusing to "
+            f"renormalize the remaining conformers:\n{details}"
+        )
     if not grids:
-        # No valid grids found; return empty Series
-        return pd.Series(dtype=float)
+        raise FileNotFoundError(f"No valid Gaussian conformer logs found under {path}")
 
     # Compute one Boltzmann weight per conformer and apply it globally.
     # Missing voxels in a conformer then contribute zero rather than
@@ -510,8 +545,10 @@ def calc_grid_(path: str) -> None:
         with Pool(NUM_WORKERS) as pool:
             results = pool.map(process_row, rows)
 
-    features = pd.DataFrame(results)
-    df_out = pd.concat([df, features], axis=1).fillna(0)
+    # Missing spatial cells mean zero contribution, whereas missing response
+    # values and metadata must remain missing rather than becoming false zeros.
+    features = pd.DataFrame(results).fillna(0)
+    df_out = pd.concat([df, features], axis=1)
 
     # Save as pickle and CSV
     pkl_path = path.replace(".xlsx", ".pkl")

@@ -1,0 +1,97 @@
+{
+  "status": "current_model",
+  "descriptor_version": "projected_co_pi_star_fullgrid_scaled_es_zero_pad_v1",
+  "descriptor_blocks": [
+    "electronic",
+    "electrostatic",
+    "orbital"
+  ],
+  "orbital_definition": "normalize(sum_i <psi_i|pi*_C=O>/(epsilon_i-epsilon_HOMO) psi_i), then square",
+  "precut_full_grid_n_per_block": 4927,
+  "electrostatic_coordinate_alignment": "electronic coordinate order",
+  "electrostatic_zero_padded_coordinates": [
+    [
+      -7,
+      5,
+      -12
+    ]
+  ],
+  "grid_block_scaling": "one scalar SD over every pre-cut raw grid value in the current training fold",
+  "bounds_grid_units": [
+    -5,
+    2,
+    1,
+    3,
+    -2,
+    3
+  ],
+  "selected_grid_n_per_block": 105,
+  "summary_features_per_block": [
+    "max",
+    "min"
+  ],
+  "summary_scaling": "one training-fold SD per summary feature",
+  "grid_spacing_bohr": 2,
+  "model": "Lasso",
+  "fit_solver": {
+    "max_iter": 200000,
+    "tolerance": 1e-06
+  },
+  "path_solver": {
+    "max_iter": 200000,
+    "tolerance": 0.0001
+  },
+  "alpha_candidates": [
+    1.0,
+    0.1,
+    0.01,
+    0.001
+  ],
+  "alpha_selection": "minimum inner LOOCV RMSE",
+  "nested_validation": "strict outer LOOCV; held-out row excluded from all scaling and selection",
+  "diketone_used_for_model_selection": false,
+  "external_diketone_series": [
+    "x",
+    "y"
+  ],
+  "diketone_evaluation_series": [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "x",
+    "y"
+  ],
+  "input_arrays": "data/current_model/inputs/model_arrays.npz",
+  "input_metadata": "data/current_model/inputs/model_metadata.csv",
+  "input_provenance": "data/current_model/inputs/model_provenance.json",
+  "input_manifest": "data/current_model/inputs/input_manifest.csv",
+  "orbital_cache": "data/current_model/inputs/projected_orbital_fullgrid_2bohr.npz",
+  "training_manifest": "data/current_model/inputs/train_rows.csv",
+  "metadata_source": "data/Details_of_experimental_results.xlsx",
+  "metadata_join_key": "InChIKey",
+  "orbital_free_comparator_summary": "data/current_model/comparators/orbital_free_summary.csv",
+  "contribution_cube_export": {
+    "directory": "data/validation/current_model/contribution_cubes",
+    "scope": "all 83 full-training substrates",
+    "blocks": [
+      "electronic",
+      "electrostatic",
+      "orbital"
+    ],
+    "effect_definition": "(x_substrate - mean(x_training)) * beta",
+    "grid_spacing_bohr": 2,
+    "model_coordinate_domain": "positive-y folded compact grid",
+    "cube_coordinate_domain": "full-y symmetric display grid",
+    "cell_center_definition": "(i - sign(i)/2) * 2 Bohr",
+    "y_expansion": "half of each folded effect at +y and half at -y",
+    "summary_features": "max/min effects are listed in the manifest CSV",
+    "additional_reference_export": {
+      "directory": "data/validation/current_model/contribution_cubes_relative_to_A24",
+      "reference": "A24 benzophenone",
+      "effect_definition": "(x_substrate - x_A24) * beta"
+    }
+  }
+}

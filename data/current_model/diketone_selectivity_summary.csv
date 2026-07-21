@@ -1,0 +1,9 @@
+group,stage,expected,predicted,ok,target_percent
+a,initial,2,2,True,58.17885608366188
+b,initial,1,1,True,75.08409832754319
+c,initial,2,2,True,73.66023084157578
+d,initial,1,1,True,89.07676802115994
+e,initial,2,2,True,93.6459688464465
+f,initial,1,1,True,72.90561363076742
+a,final,2-4,2-4,True,70.35289200038196
+e,final,2-3,2-3,True,91.62316064922257

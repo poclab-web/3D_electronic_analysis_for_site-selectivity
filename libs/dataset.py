@@ -47,7 +47,7 @@ def apply_dataset_overrides(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def common(from_file_path: str) -> pd.DataFrame:
+def common(from_file_path: str, *, apply_overrides: bool = True) -> pd.DataFrame:
     """Load and preprocess the competitive-reaction Excel data.
 
     Parameters
@@ -56,6 +56,9 @@ def common(from_file_path: str) -> pd.DataFrame:
         Path to the input Excel file.
         The file is expected to contain a 'SMILES' column and a header row
         in the second line (the first row is skipped).
+    apply_overrides : bool, optional
+        Apply historical holdout aliases such as H1 and Dxx. Set to ``False``
+        when current workbook entry labels must be preserved for figures.
 
     Returns
     -------
@@ -67,7 +70,8 @@ def common(from_file_path: str) -> pd.DataFrame:
     """
     # Load
     df = pd.read_excel(from_file_path, skiprows=1)  # .iloc[:150]
-    df = apply_dataset_overrides(df)
+    if apply_overrides:
+        df = apply_dataset_overrides(df)
     df = df.dropna(subset=["SMILES"]).copy()
 
     # Generate RDKit Mol objects from SMILES

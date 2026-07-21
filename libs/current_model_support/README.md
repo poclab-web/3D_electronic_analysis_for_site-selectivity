@@ -1,0 +1,71 @@
+# Current-model descriptor support
+
+These modules contain the quantum-descriptor generation code needed by
+`libs/predict_external_diketone.py`. They are independent of historical
+`analysis_runs` directories.
+
+- `conformer_helpers.py`: carbonyl-site identification, Gaussian conformer
+  discovery, thermochemistry parsing, and Boltzmann weights
+- `ecomfa_transform.py`: electronic and electrostatic nonlinear transform and
+  folded 2-Bohr grid integration
+- `projected_pi_star.py`: local C=O pi-star projection primitives
+- `homo_projected_orbital.py`: HOMO-gap damped canonical virtual-orbital
+  construction
+- `orbital_grid.py`: streaming squared-orbital integration onto the common
+  4,927-coordinate grid
+
+Gaussian conformers are discovered only from filenames matching
+`opt<digits>.log` exactly. Diagnostic files such as
+`opt12_optimization_partial.log` are never treated as additional conformers.
+
+Generated temporary files are written below `data/current_model/work` unless
+the caller supplies a separate molecule directory. Large Gaussian files
+should normally be placed on the external drive with `--molecule-root`.
+
+Descriptor generation resolves `Multiwfn` and `cubegen` from `PATH` by
+default. Set `MULTIWFN_EXECUTABLE` or `CUBEGEN_EXECUTABLE` when either program
+uses a nonstandard command name or installation location. Optional worker and
+scratch settings are `PROJECTED_ORBITAL_CUBEGEN_NPROC`,
+`HOMO_PROJECTED_CUBEGEN_NPROC`, and `HOMO_PROJECTED_TMP_ROOT`.
+
+## External full manifest
+
+The checked-in
+`data/current_model/inputs/projected_orbital_manifest.csv` is a sanitized,
+seven-column provenance record. It deliberately omits Gaussian paths and target
+atom indices, so it cannot be used to regenerate projected orbitals.
+
+Projected-orbital generation requires an explicit external full manifest with
+these columns:
+
+- `row_index`, `entry`, `name`, `InChIKey`, and `conf_id`
+- `status` and `boltzmann_weight`
+- `sp_chk`, `target_c_index`, and `target_o_index`
+
+The optional `cube` column can point to an NBO reference cube. `sp_chk` must
+identify the Gaussian checkpoint for the conformer; the corresponding `.fchk`
+must already exist. Run the representative prototype builder with:
+
+```bash
+python -m libs.current_model_support.projected_pi_star \
+  --manifest /path/to/external/projected_orbital_manifest_full.csv \
+  --output-dir /path/to/external/projected_pi_star_output
+```
+
+The full feature builder also requires the external pre-orbital descriptor
+DataFrame pickle. It must contain `entry`, `name`, and `InChIKey`, as well as
+`electronic_fold ...` and `electrostatic_fold ...` feature columns. Manifest
+`row_index` values are zero-based positions in this DataFrame.
+
+```bash
+python -m libs.current_model_support.homo_projected_orbital build-features \
+  --dataset-pickle /path/to/external/data.pkl \
+  --manifest /path/to/external/projected_orbital_manifest_full.csv \
+  --workers 4
+```
+
+The local progress summary does not need either external input:
+
+```bash
+python -m libs.current_model_support.homo_projected_orbital summary
+```

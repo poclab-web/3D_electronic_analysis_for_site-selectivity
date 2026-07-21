@@ -1,0 +1,13 @@
+entry,name,SMILES,InChIKey,temperature,test
+y1,"1,4-Diacetylbenzene",O=[13C](C)c1ccc(C(=O)C)cc1,SKBBQSLSGRSQAJ-CDYZYAPPSA-N,273,1
+y2,"1,4-Diacetylbenzene",O=[13C](C)c1ccc(C(=O)C)cc1,SKBBQSLSGRSQAJ-CDYZYAPPSA-N,273,1
+y3,"1,4-Diacetylbenzene",O=[13C](C)c1ccc(C(=O)C)cc1,SKBBQSLSGRSQAJ-CDYZYAPPSA-N,273,1
+y4,"1,4-Diacetylbenzene",O=[13C](C)c1ccc(C(=O)C)cc1,SKBBQSLSGRSQAJ-CDYZYAPPSA-N,273,1
+y13,"1,4-Diacetylbenzene (Reduction to cis-diol)",O=[13C](C)c1ccc([C@H](O)C)cc1,NWDDTMPWTLSMBS-JGKGVNBQSA-N,273,1
+y14,"1,4-Diacetylbenzene (Reduction to trans-diol)",O=[13C](C)c1ccc([C@@H](O)C)cc1,NWDDTMPWTLSMBS-BAZIHRRBSA-N,273,1
+y23,"1,4-Diacetylbenzene (Reduction to trans-diol)",O=[13C](C)c1ccc([C@@H](O)C)cc1,NWDDTMPWTLSMBS-BAZIHRRBSA-N,273,1
+y24,"1,4-Diacetylbenzene (Reduction to cis-diol)",O=[13C](C)c1ccc([C@H](O)C)cc1,NWDDTMPWTLSMBS-JGKGVNBQSA-N,273,1
+y31,"1,4-Diacetylbenzene (Reduction to cis-diol)",O=[13C](C)c1ccc([C@H](O)C)cc1,NWDDTMPWTLSMBS-JGKGVNBQSA-N,273,1
+y32,"1,4-Diacetylbenzene (Reduction to trans-diol)",O=[13C](C)c1ccc([C@@H](O)C)cc1,NWDDTMPWTLSMBS-BAZIHRRBSA-N,273,1
+y41,"1,4-Diacetylbenzene (Reduction to trans-diol)",O=[13C](C)c1ccc([C@@H](O)C)cc1,NWDDTMPWTLSMBS-BAZIHRRBSA-N,273,1
+y42,"1,4-Diacetylbenzene (Reduction to cis-diol)",O=[13C](C)c1ccc([C@H](O)C)cc1,NWDDTMPWTLSMBS-JGKGVNBQSA-N,273,1

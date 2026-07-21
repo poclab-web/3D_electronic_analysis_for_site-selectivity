@@ -1,3 +1,11 @@
+"""Historical model-search pipeline for the superseded three-field dataset.
+
+This module is retained to document exploratory LUMO-grid regressions.  Its
+feature selection predates the strict fold-local validation implemented in
+``libs/current_model.py`` and its scores must not be reported as results of
+the adopted paper model.
+"""
+
 from __future__ import annotations
 
 import os
@@ -52,6 +60,11 @@ BLOCK_VARIANCE_TOP = {
 
 
 def _preferred_regression_methods() -> List[str]:
+    """Return the explicitly configured legacy regression method, if any.
+
+    ``PREFERRED_REGRESSION_METHOD`` values ``none`` and ``auto`` request the
+    historical full method search and therefore return an empty list.
+    """
     preferred = PREFERRED_REGRESSION_METHOD.strip()
     if preferred and preferred.lower() not in {"none", "auto"}:
         return [preferred]
@@ -74,10 +87,19 @@ NUM_WORKERS = _positive_int_from_env("REGRESSION_NUM_WORKERS", os.cpu_count() or
 
 
 def _parse_coord(column: str) -> tuple[int, int, int]:
-    return tuple(map(int, re.findall(r"[+-]?\d+", column)))  # type: ignore[return-value]
+    """Parse the three integer grid coordinates embedded in a feature name."""
+    coordinates = tuple(map(int, re.findall(r"[+-]?\d+", column)))
+    if len(coordinates) != 3:
+        raise ValueError(f"Expected three grid coordinates in column name: {column}")
+    return coordinates  # type: ignore[return-value]
 
 
 def _in_bounds(coords: np.ndarray, bounds: tuple[int, int, int, int, int, int]) -> np.ndarray:
+    """Return a row mask for coordinates inside inclusive Cartesian bounds.
+
+    ``coords`` has shape ``(n_features, 3)`` and ``bounds`` is
+    ``(xmin, xmax, ymin, ymax, zmin, zmax)`` in descriptor-grid index units.
+    """
     xmin, xmax, ymin, ymax, zmin, zmax = bounds
     return (
         (coords[:, 0] >= xmin)
@@ -94,7 +116,13 @@ def _select_feature_indices(
     columns: Sequence[str],
     train_scaled: np.ndarray,
 ) -> np.ndarray:
-    """Select feature columns for one descriptor block."""
+    """Select spatially eligible, highest-variance features for one block.
+
+    ``columns`` contains ``<block>_fold x y z`` names and ``train_scaled`` has
+    shape ``(n_train, len(columns))``.  Returned indices retain the original
+    column order after the block-specific inclusive bounds and variance top-k
+    rules are applied.
+    """
     if not REGRESSION_USE_GRID_PREFILTER:
         return np.arange(len(columns), dtype=int)
 
@@ -353,16 +381,22 @@ def regression_(path: str, names: Sequence[str]) -> None:
     print(path)
     df = pd.read_pickle(path)
     df = df.copy()
+    if not names:
+        raise ValueError("At least one descriptor block name is required.")
     if EXTRA_TRAIN_ENTRIES:
         extra_train_mask = df["entry"].astype(str).isin(EXTRA_TRAIN_ENTRIES)
         df.loc[extra_train_mask, "test"] = 0
 
-    has_y = pd.to_numeric(df["ΔΔG.expt."], errors="coerce").notna()
-    train_mask = (df["test"] == 0) & has_y
+    target = pd.to_numeric(df["ΔΔG.expt."], errors="coerce")
+    test_flag = pd.to_numeric(df["test"], errors="coerce")
+    has_y = target.notna()
+    train_mask = test_flag.eq(0) & has_y
     df_train = df[train_mask]
+    if len(df_train) < 2:
+        raise ValueError("At least two finite training rows are required for LOOCV.")
 
-    y_train = df_train["ΔΔG.expt."].values
-    y = df["ΔΔG.expt."].values
+    y_train = target.loc[train_mask].to_numpy(dtype=float)
+    y = target.to_numpy(dtype=float)
 
     trains: List[np.ndarray] = []
     train_tests: List[np.ndarray] = []
@@ -373,8 +407,12 @@ def regression_(path: str, names: Sequence[str]) -> None:
     # --- build feature blocks ---
     for name in names:
         columns = df.filter(like=f"{name}_fold").columns.tolist()
+        if not columns:
+            raise ValueError(f"No folded descriptor columns found for block '{name}'.")
         train = df_train[columns].to_numpy()
         std = np.std(train)
+        if not np.isfinite(std) or std == 0.0:
+            raise ValueError(f"Descriptor block '{name}' has zero or non-finite scale.")
         # std = np.linalg.norm(train)  # /np.size(train)
         train_test = df[columns].to_numpy()
         # train -= average
@@ -384,6 +422,8 @@ def regression_(path: str, names: Sequence[str]) -> None:
         train_test /= std
 
         selected_indices = _select_feature_indices(name, columns, train)
+        if selected_indices.size == 0:
+            raise ValueError(f"No '{name}' features remain after spatial selection.")
 
         trains.append(train[:, selected_indices])
         train_tests.append(train_test[:, selected_indices])

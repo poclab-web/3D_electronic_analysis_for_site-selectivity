@@ -1,0 +1,168 @@
+entry,name,SMILES,InChIKey,temperature,ΔΔG.expt.,test
+C16,1-chloropinacolin,O=C(CCl)C(C)(C)C,ULSAJQMHTGKPIY-UHFFFAOYSA-N,273,-2.6011302940242405,0
+A12,"2,2,2-trifluoroacetophenone",O=C(C(F)(F)F)c1ccccc1,KZJRKRQSDZGHEC-UHFFFAOYSA-N,273,-2.3266614749075223,0
+D11,"4,4-dimethylcyclohexanone",O=C1[13CH2]CC(C)(C)CC1,PXQMSTLNSHMSJB-LBPDFUHNSA-N,273,-2.101963024860244,0
+B5,2-indanone,O=C1[13CH2]c2ccccc2C1,UMJJFEIKYGFCAT-HOSYLAQJSA-N,273,-2.1017879973597875,0
+D12(trans),4-tert-butylcyclohexanone (trans),O=C1[13CH2]C[C@@H](C(C)(C)C)CC1,YKFKEYKJGVSEIX-KWYDOPHBSA-N,273,-2.284136805132168,0
+D12(cis),4-tert-butylcyclohexanone (cis),O=C1[13CH2]C[C@H](C(C)(C)C)CC1,YKFKEYKJGVSEIX-BAUXJJEQSA-N,273,-1.5809412322316223,0
+D8(trans),2-methylcyclohexanone(trans),O=C1[C@@H](C)CCCC1,LFSAPCRASZRSKS-LURJTMIESA-N,273,-2.277837356990933,0
+D8(cis),2-methylcyclohexanone(cis),O=C1[C@H](C)CCCC1,LFSAPCRASZRSKS-ZCFIWIBFSA-N,273,-1.9431983999394413,0
+A4,4'-nitroacetophenone,O=C(C)c1ccc([N+]([O-])=O)cc1,YQYGPGKTNQNXMH-UHFFFAOYSA-N,273,-2.0184474070018505,0
+D9(cis),3-methylcyclohexanone (cis),O=C1C[C@H](C)CCC1,UJBOOUHRTQVGRU-ZCFIWIBFSA-N,273,-2.1034218579627373,0
+D9(trans),3-methylcyclohexanone (trans),O=C1C[C@@H](C)CCC1,UJBOOUHRTQVGRU-LURJTMIESA-N,273,-1.502819090913842,0
+C3,4-phenyl-3-butyn-2-one,O=C(C)C#Cc1ccccc1,UPEUQDJSUFHFQP-UHFFFAOYSA-N,273,-1.8066202652671985,0
+A9,3'-nitroacetophenone,O=C(C)c1cc([N+]([O-])=O)ccc1,ARKIFHPFTHVKDT-UHFFFAOYSA-N,273,-1.7950553485601815,0
+B6,2-tetralone,O=C1Cc2ccccc2CC1,KCKZIWSINLBROE-UHFFFAOYSA-N,273,-1.7255659462170907,0
+D10(trans),4-methylcyclohexanone (trans),O=C1[13CH2]C[C@@H](C)CC1,VGVHNLRUAMRIEW-NFPUQWBCSA-N,273,-2.5316082791648906,0
+D10(cis),4-methylcyclohexanone (cis),O=C1[13CH2]C[C@H](C)CC1,VGVHNLRUAMRIEW-TXNNBAIQSA-N,273,-1.7285998543165437,0
+D4,cyclohexanone,O=C1[13CH2]CCCC1,JHIVVAPYMSGYDF-AZXPZELESA-N,273,-2.0835534791638555,0
+B7,9-fluorenone,O=C1[13c]2ccccc2c3ccccc13,YLQWCDOCJODRMT-KHWBWMQUSA-N,273,-1.7493197476945608,1
+D1(cis),3-(benzyloxy)cyclobutanone(cis),O=C1[13CH2][C@H](OCc2ccccc2)C1,GPPSQLLIFNWNSB-VFOIXEAWSA-N,273,-1.9691263120891376,1
+D1(trans),3-(benzyloxy)cyclobutanone(trans),O=C1[13CH2][C@@H](OCc2ccccc2)C1,GPPSQLLIFNWNSB-VXPBIQBCSA-N,273,-0.9119717054118575,1
+A11,3'-(trifluoromethyl)acetophenone,O=C(C)c1cc(C(F)(F)F)ccc1,ABXGMGUHGLQMAW-UHFFFAOYSA-N,273,-1.5841979094277034,0
+E4,2-adamantanone,C1C2CC3CC1C[13CH](C2)C3=O,IYKFYARMMIESOX-VJJZLTLGSA-N,273,-1.470473783294095,0
+A6,4'-(trifluoromethyl)acetophenone,O=C(C)c1ccc(C(F)(F)F)cc1,HHAISVSEJFEWBZ-UHFFFAOYSA-N,273,-1.4634050959363298,0
+C8,2-fluorophenylacetone,O=C(C)Cc1c(F)cccc1,BANVZEUCJHUPOI-UHFFFAOYSA-N,273,-1.1844708922616534,0
+C2,4-phenyl-2-butanone,O=C(C)CCc1ccccc1,AKGGYBADQZYZPD-UHFFFAOYSA-N,273,-1.139750790027024,0
+C4,"1,1-dimethoxy-3-butanone",O=C(C)CC(OC)OC,PJCCSZUMZMCWSX-UHFFFAOYSA-N,273,-0.8821075033688486,0
+C6,1-cyclopentylethanone,O=C(C)C1CCCC1,LKENTYLPIUIMFG-UHFFFAOYSA-N,273,-0.8741251315776558,0
+B2,5-chloro-1-indanone,O=C1c2ccc(Cl)cc2CC1,MEDSHTHCZIOVPU-UHFFFAOYSA-N,273,-0.8119907764955839,0
+C5,2-nonanone,CCCCCCCC(=O)C,VKCYHJWLYTUGCC-UHFFFAOYSA-N,273,-0.7959106766567086,0
+D14(trans),"3,3,5-trimethylcyclohexanone(trans)",O=C1CC(C)(C)C[C@@H](C)C1,POSWICCRDBKBMH-ZETCQYMHSA-N,273,-1.093032799535838,0
+D14(cis),"3,3,5-trimethylcyclohexanone(cis)",O=C1CC(C)(C)C[C@H](C)C1,POSWICCRDBKBMH-SSDOTTSWSA-N,273,-0.18361162246935572,0
+A5,4'-chloroacetophenone,O=C(C)c1ccc(Cl)cc1,BUZYGTVTZYSBCU-UHFFFAOYSA-N,273,-0.7904736039696392,0
+A18,"2,2-dimethyl-1-phenylpropan-1-one",O=C(C(C)(C)C)c1ccccc1,OECPUBRNDKXFDX-UHFFFAOYSA-N,273,-0.7672692930524473,0
+A10,3'-chloroacetophenone,O=C(C)c1cc(Cl)ccc1,UUWJBXKHMMQDED-UHFFFAOYSA-N,273,-0.7451105814624829,0
+B10,dibenzosuberenone,O=C1[13c]2ccccc2C=Cc3ccccc13,SNVTZAIYUGUKNI-KCKQSJSWSA-N,273,-0.5707522973278076,0
+E2(endo),2-norbornanone (endo),O=C1[C@@H](C2)CCC2C1,KPMKEVXVVHNIEY-PRJDIBJQSA-N,273,-0.8985045618297822,0
+E2(exo),2-norbornanone (exo),O=C1[C@H](C2)CCC2C1,KPMKEVXVVHNIEY-GDVGLLTNSA-N,273,0.5061094003213791,0
+D5,cycloheptanone,C1CC[13CH2]C(=O)CC1,CGZZMOTZOONQIA-HOSYLAQJSA-N,273,-0.5417615135950751,0
+C7,"1,1-diphenylacetone",O=C(C)C(c1ccccc1)c2ccccc2,DBNWBEGCONIRGQ-UHFFFAOYSA-N,273,-0.5180692507674259,0
+C1,2'-acetonaphthone,O=C(C)c1cc2ccccc2cc1,XSAYZAUNJMRRIR-UHFFFAOYSA-N,273,-0.4811015603624227,0
+D3,"2,2-dimethylcyclopentanone",O=C1C(C)(C)CCC1,FTGZMZBYOHMEPS-UHFFFAOYSA-N,273,-0.4772220477077166,0
+D13(trans),"2,2,6-trimethylcyclohexanone (trans)",O=C1C(C)(C)CCC[C@H]1(C),ZPVOLGVTNLDBFI-SSDOTTSWSA-N,273,-0.738058924470881,0
+D13(cis),"2,2,6-Trimethylcyclohexanone-2",O=C1C(C)(C)CCC[C@@H]1(C),ZPVOLGVTNLDBFI-ZETCQYMHSA-N,273,-0.11903846144313808,0
+C13,5-nonanone,CCC[13CH2]C(=O)CCCC,WSGCRAOTEDLMFQ-CDYZYAPPSA-N,273,-0.27993769334018254,0
+D15,"3,3,5,5-tetramethylcyclohexan-1-one",O=C1[13CH2]C(C)(C)CC(C)(C)C1,OQJMHUOCLRCSED-HOSYLAQJSA-N,273,-0.2711277995120343,0
+A1,acetophenone,O=C(c1ccccc1)C,KWOLFJPFCHCOCG-UHFFFAOYSA-N,273,-0.25135991559925697,0
+A16,isobutyrophenone,O=C(c1ccccc1)C(C)C,BSMGLVDZZMBWQB-UHFFFAOYSA-N,273,-0.22544926640004398,0
+A7,3'-methylacetophenone,CC(c1cc(C)ccc1)=O,FSPSELPMWGWDRY-UHFFFAOYSA-N,273,-0.21064930116823263,0
+A8,3'-methoxyacetophenone,CC(c1cc(OC)ccc1)=O,BAYUSCHCCGXLAY-UHFFFAOYSA-N,273,-0.20925601464965848,0
+B1,1-indanone,O=C1c2ccccc2CC1,QNXSIUBBGPHDDE-UHFFFAOYSA-N,273,-0.19548927390935034,0
+A14,propiophenone,O=C(CC)c1ccccc1,KRIOVPPHQSLHCZ-UHFFFAOYSA-N,273,-0.1400583315037466,0
+A20,cyclobutyl phenyl ketone,O=C(C1CCC1)c2ccccc2,MVEBDOSCXOQNAR-UHFFFAOYSA-N,273,-0.09740911108196935,0
+B3,1-tetralone,O=C1c2ccccc2CCC1,XHLHPRDBBAGVEG-UHFFFAOYSA-N,273,-0.09379485879919268,0
+A23,cyclohexyl phenyl ketone,O=C(C1CCCCC1)c2ccccc2,BMFYCFSWWDXEPB-UHFFFAOYSA-N,273,-0.05896115917146851,0
+A19,valerophenone,O=C(CCCC)c1ccccc1,XKGLSKVNOSHTAD-UHFFFAOYSA-N,273,-0.055832478677398455,0
+A15,butyrophenone,O=C(c1ccccc1)CCC,FFSAXUULYPJSKH-UHFFFAOYSA-N,273,-0.05290821139502672,0
+B4,1-benzosuberone,O=C1c2ccccc2CCCC1,KWHUHTFXMNQHAA-UHFFFAOYSA-N,273,-0.013318973386423261,0
+A24,benzophenone,O=C([13c]1ccccc1)c2ccccc2,RWCCWEUUXYIKHB-KHWBWMQUSA-N,273,0.0,0
+A2,4'-methylacetophenone,O=C(C)c1ccc(C)cc1,GNKZMNRKLCTJAY-UHFFFAOYSA-N,273,0.15941509968075374,0
+A22,cyclopentyl phenyl ketone,O=C(c1ccccc1)C2CCCC2,VYDIMQRLNMMJBW-UHFFFAOYSA-N,273,0.16759904265469597,0
+D16(trans),(-)-menthone (eq),O=C1[C@@H](C(C)C)CC[C@H](C)C1,NFLGAXVYCFJBMK-DTWKUNHWSA-N,273,0.09801063165382129,0
+D16(cis),(-)-menthone (ax),O=C1[C@H](C(C)C)CC[C@@H](C)C1,NFLGAXVYCFJBMK-BDAKNGLRSA-N,273,0.277006797251848,0
+A17,cyclopropyl phenyl ketone,O=C(c1ccccc1)C2CC2,PJRHFTYXYCVOSJ-UHFFFAOYSA-N,273,0.21261912510977535,0
+D6,cyclooctanone,C1CC[13CH2]C(=O)CCC1,IIRFCWANHMSDCG-PTQBSOBMSA-N,273,0.2759783394108414,0
+D2(trans),2-cyclopentylcyclopentanone(trans),O=C1[C@@H](C2CCCC2)CCC1,CWZGKTMWPFTJCS-SECBINFHSA-N,273,0.3359480904225796,0
+D2(cis),2-cyclopentylcyclopentanone(cis),O=C1[C@H](C2CCCC2)CCC1,CWZGKTMWPFTJCS-VIFPVBQESA-N,273,0.3581254553855987,0
+D7,cyclododecanone,O=C1[13CH2]CCCCCCCCCC1,SXVPOSFURRDKBO-DETAZLGJSA-N,273,0.5096612923312198,0
+A3,4'-methoxyacetophenone,O=C(C)c1ccc(OC)cc1,NTPLXRHDUXRPNE-UHFFFAOYSA-N,273,0.5606068545679082,0
+A21,isovalerophenone,O=C(c1ccccc1)CC(C)C,HEOVGVNITGAUKL-UHFFFAOYSA-N,273,0.5650356173405527,0
+C15,dicyclohexylketone,O=C([13CH1]1CCCCC1)C2CCCCC2,TWXWPPKDQOWNSX-KHWBWMQUSA-N,273,0.8026917544773513,0
+B9,dibenzosuberone,O=C1[13c]2ccccc2CCc3ccccc13,BMVWCPGVLSILMU-KCKQSJSWSA-N,273,1.0227972649177022,0
+C14,"2,6-dimethyl-4-heptanone",CC(C)[13CH2]C(=O)CC(C)C,PTTPXKJBFFKCEK-HOSYLAQJSA-N,273,1.3304461412441473,0
+B8,"10,10-Dimethylanthracen-9(10H)-one",O=C1[13c]2ccccc2C(C)(C)c3ccccc13,GWFCYDIAPRIMLA-KHWBWMQUSA-N,273,2.1795873047595022,0
+E1(exo),camphor (exo),O=C1[C@](C)(C2(C)(C))CCC2C1,DSSYKIVIOFKYAU-OMNKOJBGSA-N,273,2.1697308915268367,0
+E1(endo),camphor (endo),O=C1[C@@](C)(C2(C)(C))CCC2C1,DSSYKIVIOFKYAU-MHPPCMCBSA-N,273,3.146899727358534,0
+E3(endo),fenchone (endo),O=C1[C@@](C)(C2)CCC2C1(C)(C),LHXDLQBQYFFVNW-OMNKOJBGSA-N,273,2.1442643279612725,0
+E3(exo),fenchone (exo),O=C1[C@](C)(C2)CCC2C1(C)(C),LHXDLQBQYFFVNW-MHPPCMCBSA-N,273,3.700674570202056,0
+A25,"2,2,2-triphenylacetophenone",O=C(c1ccccc1)C(c2ccccc2)(c3ccccc3)c4ccccc4,CFBBKHROQRFCNZ-UHFFFAOYSA-N,273,2.8301120538556637,0
+A13,Benzoylacetonitrile,O=C(c1ccccc1)CC#N,ZJRCIQAMTAINCB-UHFFFAOYSA-N,273,-2.1129595512688994,0
+E5(exo),Bicyclo[2.2.2]hept-5en-2one(exo),O=C1[C@H]2C=C[C@H](C2)C1,HUQXEIFQYCVOPD-RITPCOANSA-N,273,0.9875977182979492,0
+E5(endo),Bicyclo[2.2.2]hept-5en-2one(endo),O=C1[C@@H]2C=C[C@@H](C2)C1,HUQXEIFQYCVOPD-NTSWFWBYSA-N,273,-0.7668173414850362,0
+,Tropinone (exo),O=C1[13CH2][C@H]2CC[C@H](N2C)C1,QQXLDOJGLXJCSE-UTGAQZLRSA-N,273,,1
+,Tropinone (endo),O=C1[13CH2][C@@H]2CC[C@@H](N2C)C1,QQXLDOJGLXJCSE-FWGGZQILSA-N,273,,1
+D17,"1,4-Cyclohexanedion monoethyleneketal",O=C1[13CH2]CC2(OCCO2)CC1,VKRKCBWIVLSRBJ-OUBTZVSYSA-N,273,-2.2666243335044904,0
+D18(cis),Isopherone Oxide(cis),O=C1[C@@H]2O[C@]2(C)CC(C)(C)C1,ROTNQFPVXVZSRL-IONNQARKSA-N,273,-1.34298941868013,1
+D18(trans),Isopherone Oxide(trans),O=C1[C@H]2O[C@@]2(C)CC(C)(C)C1,ROTNQFPVXVZSRL-APPZFPTMSA-N,273,-2.4150802238404143,1
+C12,dicyclopropyl ketone,O=C(C1CC1)C2CC2,BIPUHAHGLJKIPK-UHFFFAOYSA-N,273,1.8676716423900361,0
+C10,6-methyl-5-hepten-2-one,O=C(C)CCC=C(C)C,UHEPJGULSIKKTP-UHFFFAOYSA-N,273,-0.9096373785584596,0
+,4-Hydroxy-2-butanone,O=C(C)CCO,LVSQXDHWDCMMRJ-UHFFFAOYSA-N,273,,1
+,Methyl Acetoacetate,O=C(C)CC(=O)OC,WRQNANDWMGAFTP-UHFFFAOYSA-N,273,,1
+,2-Hydroxyacetophenone,O=C(CO)c1ccccc1,ZWVHTXAYIKBMEE-UHFFFAOYSA-N,273,,1
+a1,"5α-Pregnane-3,20-dione (Reduction of diketone to axial-3ol)",O=[13C]1C[C@H]2CC[C@@H]3[C@H]4CC[C@@H](C(=O)C)[C@]4(C)CC[C@H]3[C@]2(C)CC1,XMRPGKVKISIQBV-KEOHVNNOSA-N,273,,1
+a2,"5α-Pregnane-3,20-dione (Reduction of diketone to equatorial-3ol)",O=[13C]1C[C@@H]2CC[C@H]3[C@@H]4CC[C@H](C(=O)C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC1,XMRPGKVKISIQBV-RCNOZMPMSA-N,273,,1
+a3,"5α-Pregnane-3,20-dione (Reduction of diketone to cis-20ol)",C[13C](=O)[C@@H]1CC[C@@H]2[C@H]3CC[C@@H]4CC(=O)CC[C@@]4(C)[C@@H]3CC[C@@]12(C),XMRPGKVKISIQBV-XAHUAHKPSA-N,273,,1
+a4,"5α-Pregnane-3,20-dione (Reduction of diketone to trans-20ol)",C[13C](=O)[C@H]1CC[C@H]2[C@@H]3CC[C@H]4CC(=O)CC[C@]4(C)[C@H]3CC[C@]12(C),XMRPGKVKISIQBV-WGDJUOIDSA-N,273,,1
+a13,"5α-Pregnane-3,20-dione (Reduction of axial-3 to cis-20ol)",C[13C](=O)[C@@H]1CC[C@@H]2[C@H]3CC[C@@H]4C[C@@H](O)CC[C@@]4(C)[C@@H]3CC[C@@]12(C),AURFZBICLPNKBZ-LNUOHZHLSA-N,273,,1
+a14,"5α-Pregnane-3,20-dione (Reduction of axial-3ol to trans-20ol)",C[13C](=O)[C@H]1CC[C@H]2[C@@H]3CC[C@H]4C[C@H](O)CC[C@]4(C)[C@H]3CC[C@]12(C),AURFZBICLPNKBZ-BKZNRXDMSA-N,273,,1
+a23,"5α-Pregnane-3,20-dione (Reduction of equatorial-3ol to cis-20ol)",C[13C](=O)[C@@H]1CC[C@@H]2[C@H]3CC[C@@H]4C[C@H](O)CC[C@@]4(C)[C@@H]3CC[C@@]12(C),AURFZBICLPNKBZ-KRXPQHRASA-N,273,,1
+a24,"5α-Pregnane-3,20-dione (Reduction of equatorial-3ol to trans-20ol)",C[13C](=O)[C@H]1CC[C@H]2[C@@H]3CC[C@H]4C[C@@H](O)CC[C@]4(C)[C@H]3CC[C@]12(C),AURFZBICLPNKBZ-VYMTVNFKSA-N,273,,1
+a41,"5α-Pregnane-3,20-dione (Reduction of trans-20ol to axial-3ol)",O=[13C]1C[C@H]2CC[C@@H]3[C@H]4CC[C@@H]([C@@H](O)C)[C@]4(C)CC[C@H]3[C@]2(C)CC1,DYVGYXXLXQESJE-ASZUNUTGSA-N,273,,1
+a42,"5α-Pregnane-3,20-dione (Reduction of trans-20ol to equatorial-3ol)",O=[13C]1C[C@@H]2CC[C@H]3[C@@H]4CC[C@H]([C@H](O)C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC1,DYVGYXXLXQESJE-VMCDEYIWSA-N,273,,1
+a31,"5α-Pregnane-3,20-dione (Reduction of cis-20ol to axial-3ol)",O=[13C]1C[C@H]2CC[C@@H]3[C@H]4CC[C@@H]([C@H](O)C)[C@]4(C)CC[C@H]3[C@]2(C)CC1,DYVGYXXLXQESJE-IEPKGJLISA-N,273,,1
+a32,"5α-Pregnane-3,20-dione (Reduction of cis-20ol to equatorial-3ol)",O=[13C]1C[C@@H]2CC[C@H]3[C@@H]4CC[C@H]([C@@H](O)C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC1,DYVGYXXLXQESJE-FXIFETPDSA-N,273,,1
+b1,"24-nor-5β-chol-22-ene-3,6-dione (diketone to trans-3ol)",O=[13C]1C[C@@H]2C(=O)C[C@@H]3[C@H]4CC[C@@H]([C@@H](C)C=C)[C@]4(C)CC[C@H]3[C@]2(C)CC1,FKXQMWVVHBPGAM-YDEWJKEYSA-N,273,,1
+b2,"24-nor-5β-chol-22-ene-3,6-dione (diketone to cis-3ol)",O=[13C]1C[C@H]2C(=O)C[C@H]3[C@@H]4CC[C@H]([C@H](C)C=C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC1,FKXQMWVVHBPGAM-SBUADZPKSA-N,273,,1
+b3,"24-nor-5β-chol-22-ene-3,6-dione (diketone to trans-6ol)",O=[13C]1C[C@@H]3[C@H]4CC[C@@H]([C@@H](C)C=C)[C@]4(C)CC[C@H]3[C@]2(C)CCC(=O)C[C@H]12,FKXQMWVVHBPGAM-ZZVOHZKGSA-N,273,,1
+b4,"24-nor-5β-chol-22-ene-3,6-dione (diketone to cis-6ol)",O=[13C]1C[C@H]3[C@@H]4CC[C@H]([C@H](C)C=C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CCC(=O)C[C@@H]12,FKXQMWVVHBPGAM-SSWDLXJHSA-N,273,,1
+b13,"24-nor-5β-chol-22-ene-3,6-dione (trans-3ol to trans-6ol)",O=[13C]1C[C@@H]3[C@H]4CC[C@@H]([C@@H](C)C=C)[C@]4(C)CC[C@H]3[C@]2(C)CC[C@H](O)C[C@H]12,GQPXPLNWQRGXOX-CNBRFADUSA-N,273,,1
+b14,"24-nor-5β-chol-22-ene-3,6-dione (trans-3ol to cis-6ol)",O=[13C]1C[C@H]3[C@@H]4CC[C@H]([C@H](C)C=C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC[C@@H](O)C[C@@H]12,GQPXPLNWQRGXOX-RQSFXVAFSA-N,273,,1
+b23,"24-nor-5β-chol-22-ene-3,6-dione (cis-3ol to trans-6ol)",O=[13C]1C[C@@H]3[C@H]4CC[C@@H]([C@@H](C)C=C)[C@]4(C)CC[C@H]3[C@]2(C)CC[C@@H](O)C[C@H]12,GQPXPLNWQRGXOX-BJCYANKKSA-N,273,,1
+b24,"24-nor-5β-chol-22-ene-3,6-dione (cis-3ol to cis-6ol)",O=[13C]1C[C@H]3[C@@H]4CC[C@H]([C@H](C)C=C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC[C@H](O)C[C@@H]12,GQPXPLNWQRGXOX-DVSYPHBRSA-N,273,,1
+b31,"24-nor-5β-chol-22-ene-3,6-dione (trans-6ol to trans-3ol)",O=[13C]1C[C@@H]2[C@H](O)C[C@@H]3[C@H]4CC[C@@H]([C@@H](C)C=C)[C@]4(C)CC[C@H]3[C@]2(C)CC1,MTFFDDCFMIWJPC-NOGVDBCPSA-N,273,,1
+b32,"24-nor-5β-chol-22-ene-3,6-dione (trans-6ol to cis-3ol)",O=[13C]1C[C@H]2[C@@H](O)C[C@H]3[C@@H]4CC[C@H]([C@H](C)C=C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC1,MTFFDDCFMIWJPC-XNVXNBRISA-N,273,,1
+b41,"24-nor-5β-chol-22-ene-3,6-dione (cis-6ol to trans-3ol)",O=[13C]1C[C@@H]2[C@@H](O)C[C@@H]3[C@H]4CC[C@@H]([C@@H](C)C=C)[C@]4(C)CC[C@H]3[C@]2(C)CC1,MTFFDDCFMIWJPC-XIEGWDQJSA-N,273,,1
+b42,"24-nor-5β-chol-22-ene-3,6-dione (cis-6ol to cis-3ol)",O=[13C]1C[C@H]2[C@H](O)C[C@H]3[C@@H]4CC[C@H]([C@H](C)C=C)[C@@]4(C)CC[C@@H]3[C@@]2(C)CC1,MTFFDDCFMIWJPC-CMOIDRFCSA-N,273,,1
+c1,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one  (diketone to trans-1ol)",O=[13C]1C[C@@H](c2ccccc2)[C@@H](C(=O)(c3ccccc3))c4ccccc14,JZYUFCHBGFELAZ-DVPIJTCCSA-N,298,,1
+c2,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one  (diketone to cis-1ol)",O=[13C]1C[C@H](c2ccccc2)[C@H](C(=O)(c3ccccc3))c4ccccc14,JZYUFCHBGFELAZ-LRLPPDEGSA-N,298,,1
+c3,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one  (diketone to trans-methanol)",O=[13C](c1ccccc1)[C@@H]2[C@H](c3ccccc3)CC(=O)c4ccccc24,JZYUFCHBGFELAZ-BROKRERSSA-N,298,,1
+c4,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one  (diketone to cis-methanol)",O=[13C](c1ccccc1)[C@H]2[C@@H](c3ccccc3)CC(=O)c4ccccc24,JZYUFCHBGFELAZ-OYPDEIEDSA-N,298,,1
+c13,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (trans-1ol to trans-methanol)",O=[13C](c1ccccc1)[C@@H]2[C@H](c3ccccc3)C[C@@H](O)c4ccccc24,CPGUTDZBKMREHK-QFFGSERESA-N,298,,1
+c14,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (trans-1ol to cis-methanol)",O=[13C](c1ccccc1)[C@H]2[C@@H](c3ccccc3)C[C@H](O)c4ccccc24,CPGUTDZBKMREHK-PSJJKCFBSA-N,298,,1
+c23,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (cis-1ol to trans-methanol)",O=[13C](c1ccccc1)[C@@H]2[C@H](c3ccccc3)C[C@H](O)c4ccccc24,CPGUTDZBKMREHK-VNSKILTCSA-N,298,,1
+c24,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (cis-1ol to cis-methanol)",O=[13C](c1ccccc1)[C@H]2[C@@H](c3ccccc3)C[C@@H](O)c4ccccc24,CPGUTDZBKMREHK-WPLBZINNSA-N,298,,1
+c31,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (trans-methanol to trans-1ol)",O=[13C]1C[C@@H](c2ccccc2)[C@@H]([C@H](O)(c3ccccc3))c4ccccc14,DLDDAANYSAREPT-WWFPUDJXSA-N,298,,1
+c32,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (trans-methanol to cis-1ol)",O=[13C]1C[C@H](c2ccccc2)[C@H]([C@@H](O)(c3ccccc3))c4ccccc14,DLDDAANYSAREPT-RZXYCCSUSA-N,298,,1
+c41,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (cis-methanol to trans-1ol)",O=[13C]1C[C@@H](c2ccccc2)[C@@H]([C@@H](O)(c3ccccc3))c4ccccc14,DLDDAANYSAREPT-ZAXYEOTCSA-N,298,,1
+c42,"4-benzoyl-3-phenyl-3,4-dihydronaphthalen-1(2H)-one (cis-methanol to cis-1ol)",O=[13C]1C[C@H](c2ccccc2)[C@H]([C@H](O)(c3ccccc3))c4ccccc14,DLDDAANYSAREPT-RWZHDOEGSA-N,298,,1
+d1,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (diketone to trans-3ol)",O=[13C]1[C@@H]2[C@@H](c3ccccc3)[C@](C#N)(C(=O)c4ccccc4)[C@@H](c5ccccc5)[C@H]([N+]([O-])=O)[C@@H]2CC1,PLSRWRBYAQQGNN-YMICIMMMSA-N,273,,1
+d2,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (diketone to cis-3ol)",O=[13C]1[C@H]2[C@H](c3ccccc3)[C@@](C#N)(C(=O)c4ccccc4)[C@H](c5ccccc5)[C@@H]([N+]([O-])=O)[C@H]2CC1,PLSRWRBYAQQGNN-PGRCEAHZSA-N,273,,1
+d3,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (diketone to trans-methanol)",c1ccccc1[13C](=O)[C@@]2(C#N)[C@H](c3ccccc3)[C@@H]([N+]([O-])=O)[C@H]4CCC(=O)[C@H]4[C@@H]2c5ccccc5,PLSRWRBYAQQGNN-UWMVLEJGSA-N,273,,1
+d4,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (diketone to cis-methanol)",c1ccccc1[13C](=O)[C@]2(C#N)[C@@H](c3ccccc3)[C@H]([N+]([O-])=O)[C@@H]4CCC(=O)[C@@H]4[C@H]2c5ccccc5,PLSRWRBYAQQGNN-DDOBXCKSSA-N,273,,1
+d13,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (trans-3ol to trans-methanol)",c1ccccc1[13C](=O)[C@@]2(C#N)[C@H](c3ccccc3)[C@@H]([N+]([O-])=O)[C@H]4CC[C@@H](O)[C@H]4[C@@H]2c5ccccc5,PVVDMQFIFUBDPK-DBCKSZCESA-N,273,,1
+d14,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (trans-3ol to cis-methanol)",c1ccccc1[13C](=O)[C@]2(C#N)[C@@H](c3ccccc3)[C@H]([N+]([O-])=O)[C@@H]4CC[C@H](O)[C@@H]4[C@H]2c5ccccc5,PVVDMQFIFUBDPK-JIFCSIQBSA-N,273,,1
+d23,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (cis-3ol to trans-methanol)",c1ccccc1[13C](=O)[C@@]2(C#N)[C@H](c3ccccc3)[C@@H]([N+]([O-])=O)[C@H]4CC[C@H](O)[C@H]4[C@@H]2c5ccccc5,PVVDMQFIFUBDPK-NDZOIIPPSA-N,273,,1
+d24,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (cis-3ol to cis-methanol)",c1ccccc1[13C](=O)[C@]2(C#N)[C@@H](c3ccccc3)[C@H]([N+]([O-])=O)[C@@H]4CC[C@@H](O)[C@@H]4[C@H]2c5ccccc5,PVVDMQFIFUBDPK-GTENJMHGSA-N,273,,1
+d31,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (trans-methanol to trans-3ol)",O=[13C]1[C@@H]2[C@@H](c3ccccc3)[C@](C#N)([C@@H](O)c4ccccc4)[C@@H](c5ccccc5)[C@H]([N+]([O-])=O)[C@@H]2CC1,NRDYHKKVKIBAKC-MNOSHWMVSA-N,273,,1
+d32,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (cis-methanol to cis-3ol)",O=[13C]1[C@H]2[C@H](c3ccccc3)[C@@](C#N)([C@@H](O)c4ccccc4)[C@H](c5ccccc5)[C@@H]([N+]([O-])=O)[C@H]2CC1,NRDYHKKVKIBAKC-OWQDIHQOSA-N,273,,1
+d41,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (cis-methanol to trans-3ol)",O=[13C]1[C@@H]2[C@@H](c3ccccc3)[C@](C#N)([C@H](O)c4ccccc4)[C@@H](c5ccccc5)[C@H]([N+]([O-])=O)[C@@H]2CC1,NRDYHKKVKIBAKC-JOSUAJGWSA-N,273,,1
+d42,"5-benzoyloctahydro-7-nitro-3-oxo-4,6-diphenyl-1H-indene-5-carbonitrile (trans-methanol to cis-3ol)",O=[13C]1[C@H]2[C@H](c3ccccc3)[C@@](C#N)([C@H](O)c4ccccc4)[C@H](c5ccccc5)[C@@H]([N+]([O-])=O)[C@H]2CC1,NRDYHKKVKIBAKC-YSWLJETKSA-N,273,,1
+e1,"3β,18-Cyclo-ent-trachylobane-14,15-dione (diketone to exo-15ol)",O=[13C]1[C@]2(C)C3C(=O)[C@]14CC[C@H]5[C@]6(C)C[C@@H]6CC[C@]5(C)[C@H]4C[C@@H]32,UVBDRYIUPXGITC-LBAGWYSSSA-N,273,,1
+e2,"3β,18-Cyclo-ent-trachylobane-14,15-dione (diketone to endo-15ol)",O=[13C]1[C@@]2(C)C3C(=O)[C@@]14CC[C@@H]5[C@@]6(C)C[C@H]6CC[C@@]5(C)[C@@H]4C[C@H]32,UVBDRYIUPXGITC-CGTNMINPSA-N,273,,1
+e3,"3β,18-Cyclo-ent-trachylobane-14,15-dione (diketone to exo-14ol)",O=[13C]1C2[C@]3(C)C(=O)[C@]14CC[C@@H]5[C@@]6(C)C[C@H]6CC[C@@]5(C)[C@@H]4C[C@H]23,UVBDRYIUPXGITC-YEOVCMATSA-N,273,,1
+e4,"3β,18-Cyclo-ent-trachylobane-14,15-dione (diketone to endo-14ol)",O=[13C]1C2[C@@]3(C)C(=O)[C@@]14CC[C@H]5[C@]6(C)C[C@@H]6CC[C@]5(C)[C@H]4C[C@@H]23,UVBDRYIUPXGITC-DOYIJFFUSA-N,273,,1
+e13,"3β,18-Cyclo-ent-trachylobane-14,15-dione (exo-15ol to exo-14ol)",O=[13C]1C2[C@]3(C)[C@H](O)[C@]14CC[C@@H]5[C@@]6(C)C[C@H]6CC[C@@]5(C)[C@@H]4C[C@H]23,IVOMJTYTUMAEPU-BNYPWJEISA-N,273,,1
+e14,"3β,18-Cyclo-ent-trachylobane-14,15-dione (exo-15ol to endo-14ol)",O=[13C]1C2[C@@]3(C)[C@@H](O)[C@@]14CC[C@H]5[C@]6(C)C[C@@H]6CC[C@]5(C)[C@H]4C[C@@H]23,IVOMJTYTUMAEPU-IFVVCBRGSA-N,273,,1
+e23,"3β,18-Cyclo-ent-trachylobane-14,15-dione (endo-15ol to exo-14ol)",O=[13C]1C2[C@]3(C)[C@@H](O)[C@]14CC[C@@H]5[C@@]6(C)C[C@H]6CC[C@@]5(C)[C@@H]4C[C@H]23,IVOMJTYTUMAEPU-NHUKILISSA-N,273,,1
+e24,"3β,18-Cyclo-ent-trachylobane-14,15-dione (endo-15ol to endo-14ol)",O=[13C]1C2[C@@]3(C)[C@H](O)[C@@]14CC[C@H]5[C@]6(C)C[C@@H]6CC[C@]5(C)[C@H]4C[C@@H]23,IVOMJTYTUMAEPU-NTZOYJIVSA-N,273,,1
+e31,"3β,18-Cyclo-ent-trachylobane-14,15-dione (exo-14ol to exo-15ol)",O=[13C]1[C@]2(C)C3[C@H](O)[C@]14CC[C@H]5[C@]6(C)C[C@@H]6CC[C@]5(C)[C@H]4C[C@@H]32,CIHUIHZNFZBJLT-YMEMZECQSA-N,273,,1
+e32,"3β,18-Cyclo-ent-trachylobane-14,15-dione (exo-14ol to endo-15ol)",O=[13C]1[C@@]2(C)C3[C@@H](O)[C@@]14CC[C@@H]5[C@@]6(C)C[C@H]6CC[C@@]5(C)[C@@H]4C[C@H]32,CIHUIHZNFZBJLT-NIHYJFBUSA-N,273,,1
+e41,"3β,18-Cyclo-ent-trachylobane-14,15-dione (endo-14ol to exo-15ol)",O=[13C]1[C@]2(C)C3[C@@H](O)[C@]14CC[C@H]5[C@]6(C)C[C@@H]6CC[C@]5(C)[C@H]4C[C@@H]32,CIHUIHZNFZBJLT-FLCNWGKISA-N,273,,1
+e42,"3β,18-Cyclo-ent-trachylobane-14,15-dione (endo-14ol to endo-15ol)",O=[13C]1[C@@]2(C)C3[C@H](O)[C@@]14CC[C@@H]5[C@@]6(C)C[C@H]6CC[C@@]5(C)[C@@H]4C[C@H]32,CIHUIHZNFZBJLT-SVCHTCNZSA-N,273,,1
+f1,"Neopupukean-11(13)-en-4,10-dione (diketone to endo-cyclopentanol)",O=[13C]1[C@]2(C)C[C@H]3[C@H](C(=C)C)C[C@@H]2[C@](C)(C3=O)C1,OLTFXJBPGNUYCS-SXWDLQOWSA-N,273,,1
+f2,"Neopupukean-11(13)-en-4,10-dione (diketone to exo-cyclopentanol)",O=[13C]1[C@@]2(C)C[C@@H]3[C@@H](C(=C)C)C[C@H]2[C@@](C)(C3=O)C1,OLTFXJBPGNUYCS-HMOKLJILSA-N,273,,1
+f3,"Neopupukean-11(13)-en-4,10-dione (diketone to endo-cyclohexanol)",O=[13C]1[C@]2(C)CC(=O)[C@]3(C)C[C@H]1[C@H](C(=C)C)C[C@H]23,OLTFXJBPGNUYCS-UQVPQUPTSA-N,273,,1
+f4,"Neopupukean-11(13)-en-4,10-dione (diketone to exo-cyclohexanol)",O=[13C]1[C@@]2(C)CC(=O)[C@@]3(C)C[C@@H]1[C@@H](C(=C)C)C[C@@H]23,OLTFXJBPGNUYCS-TUZJZFOZSA-N,273,,1
+f31,"Neopupukean-11(13)-en-4,10-dione (endo-cyclohexanol to endo-cyclopentanol)",O=[13C]1[C@]2(C)C[C@H]3[C@H](C(=C)C)C[C@@H]2[C@](C)([C@H]3O)C1,YNUSLOYDHGAYPB-XFQCTZMHSA-N,273,,1
+f41,"Neopupukean-11(13)-en-4,10-dione (exo-cyclohexanol to endo-cyclopentanol)",O=[13C]1[C@]2(C)C[C@H]3[C@H](C(=C)C)C[C@@H]2[C@](C)([C@@H]3O)C1,YNUSLOYDHGAYPB-DUGYZFACSA-N,273,,1
+f42,"Neopupukean-11(13)-en-4,10-dione (exo-cyclohexanol to exo-cyclopentanol)",O=[13C]1[C@@]2(C)C[C@@H]3[C@@H](C(=C)C)C[C@H]2[C@@](C)([C@H]3O)C1,YNUSLOYDHGAYPB-PVGPVLRXSA-N,273,,1
+f32,"Neopupukean-11(13)-en-4,10-dione (endo-cyclohexanol to exo-cyclopentanol)",O=[13C]1[C@@]2(C)C[C@@H]3[C@@H](C(=C)C)C[C@H]2[C@@](C)([C@@H]3O)C1,YNUSLOYDHGAYPB-KGJWWKPOSA-N,273,,1
+f13,"Neopupukean-11(13)-en-4,10-dione (endo-cyclopentanol to endo-cyclohexanol)",O=[13C]1[C@]2(C)C[C@H](O)[C@]3(C)C[C@H]1[C@H](C(=C)C)C[C@H]23,YRPUMHYLNYRQGZ-RGVIPMAXSA-N,273,,1
+f23,"Neopupukean-11(13)-en-4,10-dione (exo-cyclopentanol to endo-cyclohexanol)",O=[13C]1[C@]2(C)C[C@@H](O)[C@]3(C)C[C@H]1[C@H](C(=C)C)C[C@H]23,YRPUMHYLNYRQGZ-SMKLAQEQSA-N,273,,1
+f24,"Neopupukean-11(13)-en-4,10-dione (exo-cyclopentanol to exo-cyclohexanol)",O=[13C]1[C@@]2(C)C[C@H](O)[C@@]3(C)C[C@@H]1[C@@H](C(=C)C)C[C@@H]23,YRPUMHYLNYRQGZ-HEENYJBUSA-N,273,,1
+f14,"Neopupukean-11(13)-en-4,10-dione (endo-cyclopentanol to exo-cyclohexanol)",O=[13C]1[C@@]2(C)C[C@@H](O)[C@@]3(C)C[C@@H]1[C@@H](C(=C)C)C[C@@H]23,YRPUMHYLNYRQGZ-ZUBQCWPDSA-N,273,,1
+C9,5-Chloro-2-pentanone,O=C(C)CCCCl,XVRIEWDDMODMGA-UHFFFAOYSA-N,273,-1.2087555629071842,0
+C17,5-methyl-3-heptanone,O=C(CC)CC(C)CC,PSBKJPTZCVYXSD-UHFFFAOYSA-N,273,0.3876474635333945,0
+A100,2'-aminoacetophenone,O=C(C)c1c(N)cccc1,GTDQGKWDWVUKTI-UHFFFAOYSA-N,273,1.9652069632117553,1
+C11,trans-benzalacetone,O=C(C)/C=C/c1ccccc1,BWHOZHOGCMHOBV-BQYQJAHWSA-N,273,-0.505017043351223,1

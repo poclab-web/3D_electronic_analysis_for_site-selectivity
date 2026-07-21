@@ -1,21 +1,23 @@
-"""Reproducible runner for the current site-selectivity reference model.
+"""Reproduce the current three-block site-selectivity reference model.
 
-The model uses the frozen 83-observation descriptor bundle generated from the
-current experimental data.  It retains only the compact electronic and
-electrostatic grids plus max/min summaries (214 features) and fits Lasso with
-alpha selected by inner LOOCV in every outer fold.
+The model uses electronic, electrostatic, and HOMO-gap damped projected C=O
+pi* grids.  Every block is aligned to the same 4,927 pre-cut coordinates,
+scaled by one training-fold SD before spatial selection, and represented by
+105 compact-grid values plus max/min summaries (321 features in total).  Lasso
+alpha is selected independently inside every outer LOOCV fold.
 
 Run from the repository root::
 
-    OMP_NUM_THREADS=1 python libs/current_model.py --workers 20
+    OMP_NUM_THREADS=1 python libs/current_model.py --workers 20 \
+        --no-excel-refresh --skip-contribution-cubes
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
-import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -23,7 +25,7 @@ from pathlib import Path
 import matplotlib
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Lasso
+from sklearn.linear_model import Lasso, lasso_path
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 matplotlib.use("Agg")
@@ -32,48 +34,389 @@ import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "current_model"
+INPUT_DIR = DATA_DIR / "inputs"
 VALIDATION_DIR = ROOT / "data" / "validation" / "current_model"
-BUNDLE_PATH = DATA_DIR / "model_input_bundle.pkl"
-TRAIN_ROWS_PATH = DATA_DIR / "train_rows.csv"
-ARCHIVED_BUNDLE = (
-    ROOT
-    / "analysis_runs/homo_damped_projected_orbital_nested_20260709"
-    / "current_model_20260712/full85_bundle_20260713/full85_bundle.pkl"
-)
-ARCHIVED_TRAIN_ROWS = (
-    ROOT
-    / "analysis_runs/homo_damped_projected_orbital_nested_20260709"
-    / "current_model_20260712/strict_nested_lasso_plus_D100_C101_C102_20260713/train_rows.csv"
-)
-ARCHIVED_VALIDATION_DIR = (
-    ROOT
-    / "analysis_runs/homo_damped_projected_orbital_nested_20260709"
-    / "current_model_20260712/summary_max_min_only_ablation_20260714"
-)
-ARCHIVED_SEMIQUANT_DETAIL = ARCHIVED_VALIDATION_DIR / "fulltrain_diketone_semiquant_detail.csv"
-
+MODEL_ARRAYS_PATH = INPUT_DIR / "model_arrays.npz"
+MODEL_METADATA_PATH = INPUT_DIR / "model_metadata.csv"
+MODEL_PROVENANCE_PATH = INPUT_DIR / "model_provenance.json"
+INPUT_MANIFEST_PATH = INPUT_DIR / "input_manifest.csv"
+DISPLAY_GEOMETRIES_PATH = INPUT_DIR / "display_geometries.json"
+TRAIN_ROWS_PATH = INPUT_DIR / "train_rows.csv"
+ACTIVE_EXCEL = ROOT / "data" / "Details_of_experimental_results.xlsx"
+ORBITAL_CACHE_PATH = INPUT_DIR / "projected_orbital_fullgrid_2bohr.npz"
+ORBITAL_MANIFEST_PATH = INPUT_DIR / "projected_orbital_manifest.csv"
+EXTERNAL_DIKETONE_INPUT_DIR = INPUT_DIR / "external_diketones"
+ORBITAL_FREE_SUMMARY_PATH = DATA_DIR / "comparators" / "orbital_free_summary.csv"
 TARGET = "ΔΔG.expt."
-BLOCKS = ("electronic", "electrostatic")
+BLOCKS = ("electronic", "electrostatic", "orbital")
 EE_BOUNDS = (-5, 2, 1, 3, -2, 3)
-ALPHAS = (0.010, 0.011, 0.012, 0.013, 0.014, 0.015, 0.016)
-FULLTRAIN_ALPHA = 0.010
+ALPHAS = (1.0, 0.1, 0.01, 0.001)
+EXPECTED_FULL_GRID_N = 4927
+EXPECTED_SELECTED_GRID_N = 105
+EXPECTED_FEATURE_N = 321
+LASSO_FIT_MAX_ITER = 200000
+LASSO_FIT_TOL = 1.0e-6
+LASSO_PATH_MAX_ITER = 200000
+LASSO_PATH_TOL = 1.0e-4
+DESCRIPTOR_VERSION = "projected_co_pi_star_fullgrid_scaled_es_zero_pad_v1"
+EXTERNAL_DIKETONE_SERIES = ("x", "y")
+EXTERNAL_METADATA_COLUMNS = (
+    "entry", "name", "SMILES", "InChIKey", "temperature", "test"
+)
+DIKETONE_ENTRY_SUFFIXES = (
+    "1", "2", "3", "4", "13", "14", "23", "24", "31", "32", "41", "42"
+)
 
 
-def ensure_frozen_inputs() -> None:
-    """Install the descriptor cache and 83-point training manifest once."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not BUNDLE_PATH.exists():
-        if not ARCHIVED_BUNDLE.exists():
-            raise FileNotFoundError(f"Reference descriptor bundle is missing: {ARCHIVED_BUNDLE}")
-        shutil.copy2(ARCHIVED_BUNDLE, BUNDLE_PATH)
-    manifest_ok = TRAIN_ROWS_PATH.exists() and len(pd.read_csv(TRAIN_ROWS_PATH)) == 83
-    if not manifest_ok:
-        if not ARCHIVED_TRAIN_ROWS.exists():
-            raise FileNotFoundError(f"Reference training manifest is missing: {ARCHIVED_TRAIN_ROWS}")
-        shutil.copy2(ARCHIVED_TRAIN_ROWS, TRAIN_ROWS_PATH)
+def _sha256(path: Path) -> str:
+    """Return the SHA-256 digest of a frozen input file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_input_manifest() -> pd.DataFrame:
+    """Verify byte sizes and SHA-256 hashes for every listed frozen input.
+
+    Manifest paths must be relative to :data:`INPUT_DIR` and may not traverse
+    outside it.  A mismatch is fatal because even a subtle descriptor change
+    can alter feature scaling, Lasso selection, and the reported validation
+    metrics.
+    """
+    if not INPUT_MANIFEST_PATH.exists():
+        raise FileNotFoundError(f"Frozen-input manifest is missing: {INPUT_MANIFEST_PATH}")
+    manifest = pd.read_csv(INPUT_MANIFEST_PATH)
+    expected_columns = ["path", "size_bytes", "sha256"]
+    if manifest.columns.tolist() != expected_columns:
+        raise ValueError(
+            f"Unexpected input-manifest columns {manifest.columns.tolist()}; "
+            f"expected {expected_columns}."
+        )
+    if manifest["path"].duplicated().any():
+        duplicates = manifest.loc[manifest["path"].duplicated(), "path"].tolist()
+        raise ValueError(f"Duplicate frozen-input manifest paths: {duplicates}")
+    errors: list[str] = []
+    for record in manifest.to_dict("records"):
+        relative = Path(str(record["path"]))
+        if relative.is_absolute() or ".." in relative.parts:
+            errors.append(f"unsafe path: {relative}")
+            continue
+        path = INPUT_DIR / relative
+        if not path.is_file():
+            errors.append(f"missing: {relative}")
+            continue
+        actual_size = path.stat().st_size
+        expected_size = int(record["size_bytes"])
+        if actual_size != expected_size:
+            errors.append(
+                f"size mismatch: {relative} ({actual_size} != {expected_size})"
+            )
+            continue
+        actual_digest = _sha256(path)
+        expected_digest = str(record["sha256"]).lower()
+        if actual_digest != expected_digest:
+            errors.append(f"SHA-256 mismatch: {relative}")
+    if errors:
+        raise ValueError("Frozen-input verification failed:\n- " + "\n- ".join(errors))
+    return manifest
+
+
+def load_frozen_inputs() -> dict[str, object]:
+    """Load the portable metadata, descriptor arrays, and provenance record."""
+    meta = pd.read_csv(MODEL_METADATA_PATH)
+    with np.load(MODEL_ARRAYS_PATH, allow_pickle=False) as archive:
+        expected_keys = {
+            *(f"raw_{block}" for block in BLOCKS),
+            *(f"coords_{block}" for block in BLOCKS),
+        }
+        if set(archive.files) != expected_keys:
+            raise ValueError(
+                f"Unexpected keys in {MODEL_ARRAYS_PATH}: {sorted(archive.files)}"
+            )
+        raw = {
+            block: np.asarray(archive[f"raw_{block}"], dtype=float)
+            for block in BLOCKS
+        }
+        coords = {
+            block: np.asarray(archive[f"coords_{block}"], dtype=int)
+            for block in BLOCKS
+        }
+    provenance = json.loads(MODEL_PROVENANCE_PATH.read_text(encoding="utf-8"))
+    return {
+        "meta": meta,
+        "raw_blocks": raw,
+        "coords": coords,
+        "descriptor_version": provenance.get("descriptor_version"),
+        "provenance": provenance,
+    }
+
+
+def ensure_frozen_inputs() -> dict[str, object]:
+    """Validate and return the self-contained current-model input package."""
+    required = (
+        MODEL_ARRAYS_PATH,
+        MODEL_METADATA_PATH,
+        MODEL_PROVENANCE_PATH,
+        INPUT_MANIFEST_PATH,
+        DISPLAY_GEOMETRIES_PATH,
+        TRAIN_ROWS_PATH,
+        ORBITAL_CACHE_PATH,
+        ORBITAL_MANIFEST_PATH,
+    )
+    missing = [path for path in required if not path.exists()]
+    if missing:
+        joined = "\n".join(f"- {path}" for path in missing)
+        raise FileNotFoundError(f"Current-model inputs are incomplete:\n{joined}")
+    verify_input_manifest()
+    train_rows = pd.read_csv(TRAIN_ROWS_PATH)
+    if len(train_rows) != 83:
+        raise ValueError(f"Expected 83 training rows, found {len(train_rows)}.")
+    required_train_columns = {"row_index", "entry", "name", "InChIKey", "ddg"}
+    if not required_train_columns.issubset(train_rows.columns):
+        raise ValueError(
+            f"Training manifest is missing columns: "
+            f"{sorted(required_train_columns - set(train_rows.columns))}"
+        )
+    payload = load_frozen_inputs()
+    meta = payload["meta"]
+    row_indices = train_rows["row_index"].to_numpy(dtype=int)
+    if np.any(row_indices < 0) or np.any(row_indices >= len(meta)):
+        raise ValueError("Training row indices fall outside the frozen metadata table.")
+    frozen_train_keys = meta.loc[row_indices, "InChIKey"].astype(str).to_numpy()
+    manifest_train_keys = train_rows["InChIKey"].astype(str).to_numpy()
+    if not np.array_equal(frozen_train_keys, manifest_train_keys):
+        raise ValueError("Training identities do not align with frozen metadata rows.")
+    if len(set(manifest_train_keys)) != len(manifest_train_keys):
+        raise ValueError("Training InChIKeys must be unique.")
+    bundle_ok = (
+        payload.get("descriptor_version") == DESCRIPTOR_VERSION
+        and set(payload.get("raw_blocks", {})) == set(BLOCKS)
+        and all(
+            np.asarray(payload["raw_blocks"][block]).shape
+            == (len(meta), EXPECTED_FULL_GRID_N)
+            for block in BLOCKS
+        )
+        and all(
+            np.asarray(payload["coords"][block]).shape == (EXPECTED_FULL_GRID_N, 3)
+            for block in BLOCKS
+        )
+        and all(
+            np.isfinite(np.asarray(payload["raw_blocks"][block], dtype=float)).all()
+            for block in BLOCKS
+        )
+    )
+    if not bundle_ok:
+        raise ValueError(f"Current-model descriptor inputs are invalid: {INPUT_DIR}")
+    return payload
+
+
+def refresh_inputs_from_excel(
+    payload: dict[str, object],
+    train_rows: pd.DataFrame,
+) -> tuple[dict[str, object], np.ndarray, dict[str, object]]:
+    """Refresh labels and responses by molecular identity, never by row number.
+
+    The expensive grid arrays remain attached to their InChIKeys.  This makes
+    entry renumbering harmless while still applying corrected experimental
+    values from the active workbook.  Rows removed from Excel are dropped only
+    when they are not members of the frozen training set.  All changes occur
+    in memory; immutable files below :data:`INPUT_DIR` are never rewritten.
+    """
+    from dataset import common  # noqa: PLC0415
+
+    old_meta = payload["meta"].copy().reset_index(drop=True)
+    old_train_rows = train_rows["row_index"].to_numpy(dtype=int)
+    train_keys = old_meta.loc[old_train_rows, "InChIKey"].astype(str).tolist()
+    if len(train_keys) != len(set(train_keys)):
+        raise ValueError("Training InChIKeys must be unique before Excel refresh.")
+
+    # The active workbook is the authority for current entry labels. Historical
+    # holdout aliases such as H1 and Dxx must not leak into manuscript figures.
+    source = common(str(ACTIVE_EXCEL), apply_overrides=False).copy().reset_index(drop=True)
+    source["InChIKey"] = source["InChIKey"].astype(str)
+    source_by_key = source.drop_duplicates("InChIKey", keep="first").set_index("InChIKey")
+    old_keys = old_meta["InChIKey"].astype(str)
+    matched = old_keys.isin(source_by_key.index).to_numpy()
+    missing_training = sorted(set(train_keys) - set(source_by_key.index))
+    if missing_training:
+        raise ValueError(f"Active Excel is missing training molecules: {missing_training}")
+
+    retained_old_indices = np.flatnonzero(matched)
+    refreshed_meta = old_meta.iloc[retained_old_indices].copy().reset_index(drop=True)
+    metadata_columns = (
+        "entry", "name", "SMILES", "InChIKey", "temperature", TARGET, "test"
+    )
+    changed_rows: list[dict[str, object]] = []
+    for new_index, old_index in enumerate(retained_old_indices):
+        key = str(old_meta.at[old_index, "InChIKey"])
+        source_row = source_by_key.loc[key]
+        before_entry = str(old_meta.at[old_index, "entry"])
+        before_name = str(old_meta.at[old_index, "name"])
+        before_target = float(old_meta.at[old_index, TARGET])
+        after_target = source_row[TARGET]
+        for column in metadata_columns:
+            refreshed_meta.at[new_index, column] = (
+                key if column == "InChIKey" else source_row[column]
+            )
+        target_changed = (
+            pd.notna(after_target)
+            and (not np.isclose(before_target, float(after_target), rtol=0.0, atol=1e-12))
+        )
+        if (
+            before_entry != str(source_row["entry"])
+            or before_name != str(source_row["name"])
+            or target_changed
+        ):
+            changed_rows.append(
+                {
+                    "InChIKey": key,
+                    "old_entry": before_entry,
+                    "new_entry": source_row["entry"],
+                    "old_name": before_name,
+                    "new_name": source_row["name"],
+                    "old_ddg": before_target,
+                    "new_ddg": after_target,
+                    "ddg_changed": bool(target_changed),
+                }
+            )
+
+    refreshed_raw = {
+        block: np.asarray(payload["raw_blocks"][block], dtype=float)[retained_old_indices]
+        for block in BLOCKS
+    }
+    refreshed_coords = {
+        block: np.asarray(payload["coords"][block], dtype=int) for block in BLOCKS
+    }
+    key_to_new_index = {
+        str(key): index for index, key in enumerate(refreshed_meta["InChIKey"])
+    }
+    refreshed_train = np.asarray([key_to_new_index[key] for key in train_keys], dtype=int)
+    if refreshed_meta.loc[refreshed_train, TARGET].isna().any():
+        raise ValueError("A refreshed training row has no experimental response.")
+
+    refreshed_payload = {
+        **payload,
+        "meta": refreshed_meta,
+        "raw_blocks": refreshed_raw,
+        "coords": refreshed_coords,
+    }
+    change_columns = (
+        "InChIKey",
+        "old_entry",
+        "new_entry",
+        "old_name",
+        "new_name",
+        "old_ddg",
+        "new_ddg",
+        "ddg_changed",
+    )
+    pd.DataFrame(changed_rows, columns=change_columns).to_csv(
+        DATA_DIR / "excel_refresh_changes.csv", index=False
+    )
+
+    removed = old_meta.loc[~matched, ["entry", "name", "InChIKey"]].copy()
+    removed.to_csv(DATA_DIR / "excel_refresh_removed_rows.csv", index=False)
+    source_keys = set(source["InChIKey"].astype(str))
+    new_external = source.loc[
+        ~source["InChIKey"].astype(str).isin(set(old_keys)),
+        ["entry", "name", "InChIKey", "SMILES", "temperature", TARGET, "test"],
+    ].copy()
+    new_external.to_csv(DATA_DIR / "excel_refresh_new_external_rows.csv", index=False)
+    audit = {
+        "excel": str(ACTIVE_EXCEL.relative_to(ROOT)),
+        "old_bundle_n": int(len(old_meta)),
+        "refreshed_bundle_n": int(len(refreshed_meta)),
+        "training_n": int(len(refreshed_train)),
+        "removed_nontraining_n": int(len(removed)),
+        "changed_metadata_n": int(len(changed_rows)),
+        "new_external_rows_n": int(len(new_external)),
+        "new_external_unique_molecules_n": int(
+            len(source_keys - set(refreshed_meta["InChIKey"].astype(str)))
+        ),
+        "feature_blocks": list(BLOCKS),
+    }
+    (DATA_DIR / "excel_refresh_audit.json").write_text(
+        json.dumps(audit, indent=2) + "\n", encoding="utf-8"
+    )
+    return refreshed_payload, refreshed_train, audit
+
+
+def append_external_diketone_series(
+    meta: pd.DataFrame,
+    raw: dict[str, np.ndarray],
+    coords: dict[str, np.ndarray],
+    series_names: tuple[str, ...] = EXTERNAL_DIKETONE_SERIES,
+) -> tuple[pd.DataFrame, dict[str, np.ndarray], np.ndarray]:
+    """Append frozen external diketone descriptors without changing training data."""
+    extended_meta = meta.copy().reset_index(drop=True)
+    extended_raw = {
+        block: np.asarray(raw[block], dtype=float).copy() for block in BLOCKS
+    }
+    appended: list[int] = []
+    existing_entries = set(extended_meta["entry"].astype(str).str.lower())
+
+    for series in series_names:
+        series_dir = EXTERNAL_DIKETONE_INPUT_DIR / f"{series}_series"
+        rows_path = series_dir / "input_rows.csv"
+        cache_path = series_dir / "external_raw_blocks_2bohr.npz"
+        if not rows_path.exists() or not cache_path.exists():
+            raise FileNotFoundError(
+                f"External diketone {series} inputs are incomplete: {series_dir}"
+            )
+
+        rows = pd.read_csv(rows_path).copy()
+        if tuple(rows.columns) != EXTERNAL_METADATA_COLUMNS:
+            raise ValueError(
+                f"{series}: external metadata columns must be "
+                f"{list(EXTERNAL_METADATA_COLUMNS)}, got {rows.columns.tolist()}"
+            )
+        rows["entry"] = rows["entry"].astype(str).str.lower()
+        expected = [f"{series}{suffix}" for suffix in DIKETONE_ENTRY_SUFFIXES]
+        if rows["entry"].tolist() != expected:
+            raise ValueError(
+                f"{series}: expected entry order {expected}, got {rows['entry'].tolist()}"
+            )
+        overlap = existing_entries.intersection(expected)
+        if overlap:
+            raise ValueError(f"{series}: entries already exist in the model bundle: {sorted(overlap)}")
+
+        cache = np.load(cache_path, allow_pickle=False)
+        cache_entries = cache["entries"].astype(str)
+        cache_keys = cache["inchikeys"].astype(str)
+        if not np.array_equal(cache_entries, rows["entry"].to_numpy(dtype=str)):
+            raise ValueError(f"{series}: descriptor and metadata entry orders differ")
+        if not np.array_equal(
+            cache_keys, rows["InChIKey"].astype(str).to_numpy()
+        ):
+            raise ValueError(f"{series}: descriptor and metadata identities differ")
+
+        for block in BLOCKS:
+            external_coords = np.asarray(cache[f"coords_{block}"], dtype=int)
+            if not np.array_equal(external_coords, coords[block]):
+                raise ValueError(f"{series}: {block} coordinate order differs")
+            values = np.asarray(cache[block], dtype=float)
+            if values.shape != (len(rows), EXPECTED_FULL_GRID_N):
+                raise ValueError(
+                    f"{series}: unexpected {block} shape {values.shape}"
+                )
+            if not np.isfinite(values).all():
+                raise ValueError(f"{series}: {block} contains non-finite values")
+            extended_raw[block] = np.vstack((extended_raw[block], values))
+
+        rows[TARGET] = np.nan
+        rows["test"] = 1
+        start = len(extended_meta)
+        extended_meta = pd.concat((extended_meta, rows), ignore_index=True, sort=False)
+        appended.extend(range(start, start + len(rows)))
+        existing_entries.update(expected)
+
+    return extended_meta, extended_raw, np.asarray(appended, dtype=int)
 
 
 def in_bounds(coords: np.ndarray) -> np.ndarray:
+    """Return the mask for the adopted 105-cell compact spatial domain."""
     xmin, xmax, ymin, ymax, zmin, zmax = EE_BOUNDS
     return (
         (coords[:, 0] >= xmin)
@@ -90,7 +433,7 @@ def build_features(
     coords_by_block: dict[str, np.ndarray],
     train: np.ndarray,
 ) -> tuple[np.ndarray, list[str], dict[str, np.ndarray]]:
-    """Build the 210 compact grid and four max/min summary features."""
+    """Build 315 compact grids and six max/min summary features."""
     arrays: list[np.ndarray] = []
     names: list[str] = []
     masks: dict[str, np.ndarray] = {}
@@ -105,7 +448,7 @@ def build_features(
         if not np.isfinite(scale) or scale == 0.0:
             scale = 1.0
         arrays.append(raw[:, keep] / scale)
-        names.extend(f"{block}:grid:{tuple(coord)}" for coord in coords[keep])
+        names.extend(f"{block}:grid:{tuple(map(int, coord))}" for coord in coords[keep])
     for block in BLOCKS:
         raw = raw_blocks[block]
         keep = masks[block]
@@ -117,20 +460,50 @@ def build_features(
     return np.concatenate(arrays, axis=1), names, masks
 
 
-def fit_predict(x: np.ndarray, y: np.ndarray, train: np.ndarray, pred: np.ndarray, alpha: float) -> np.ndarray:
-    model = Lasso(alpha=alpha, fit_intercept=True, max_iter=50000, tol=1e-5)
-    model.fit(x[train], y[train])
-    return model.predict(x[pred])
+def alpha_path_predictions(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_pred: np.ndarray,
+) -> np.ndarray:
+    """Predict all systematic absolute-alpha candidates in one Lasso path."""
+    x_mean = np.mean(x_train, axis=0)
+    y_mean = float(np.mean(y_train))
+    _, coefficients, _ = lasso_path(
+        x_train - x_mean,
+        y_train - y_mean,
+        alphas=np.asarray(ALPHAS, dtype=float),
+        max_iter=LASSO_PATH_MAX_ITER,
+        tol=LASSO_PATH_TOL,
+    )
+    return (x_pred - x_mean) @ coefficients + y_mean
 
 
-def inner_best(raw: dict[str, np.ndarray], coords: dict[str, np.ndarray], y: np.ndarray, train: np.ndarray) -> tuple[float, float, float]:
+def inner_path_scores(
+    raw: dict[str, np.ndarray],
+    coords: dict[str, np.ndarray],
+    y: np.ndarray,
+    train: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return leakage-free inner-LOOCV predictions and RMSE for every alpha."""
     predictions = np.empty((len(ALPHAS), len(train)), dtype=float)
     for local, holdout in enumerate(train):
         fold_train = train[train != holdout]
         x, _, _ = build_features(raw, coords, fold_train)
-        for candidate, alpha in enumerate(ALPHAS):
-            predictions[candidate, local] = fit_predict(x, y, fold_train, np.asarray([holdout]), alpha)[0]
+        predictions[:, local] = alpha_path_predictions(
+            x[fold_train], y[fold_train], x[[holdout]]
+        ).ravel()
     rmse = np.sqrt(np.mean((predictions - y[train][None, :]) ** 2, axis=1))
+    return predictions, rmse
+
+
+def inner_best(
+    raw: dict[str, np.ndarray],
+    coords: dict[str, np.ndarray],
+    y: np.ndarray,
+    train: np.ndarray,
+) -> tuple[float, float, float]:
+    """Select alpha by leakage-free inner LOOCV and return alpha/RMSE/R2."""
+    predictions, rmse = inner_path_scores(raw, coords, y, train)
     best = int(np.argmin(rmse))
     return float(ALPHAS[best]), float(rmse[best]), float(r2_score(y[train], predictions[best]))
 
@@ -144,83 +517,479 @@ def outer_task(
     diketone: np.ndarray,
     meta: pd.DataFrame,
 ) -> dict[str, object]:
+    """Fit one strict outer-LOOCV model and predict its held-out substrate."""
     holdout = int(train[fold_id])
     fold_train = train[train != holdout]
     alpha, inner_rmse, inner_r2 = inner_best(raw, coords, y, fold_train)
-    x, _, _ = build_features(raw, coords, fold_train)
+    x, names, _ = build_features(raw, coords, fold_train)
+    model = Lasso(
+        alpha=alpha,
+        fit_intercept=True,
+        max_iter=LASSO_FIT_MAX_ITER,
+        tol=LASSO_FIT_TOL,
+    )
+    model.fit(x[fold_train], y[fold_train])
     return {
         "fold_id": fold_id,
         "holdout_index": holdout,
         "entry": str(meta.loc[holdout, "entry"]),
         "name": str(meta.loc[holdout, "name"]),
         "y_true": float(y[holdout]),
-        "y_pred": float(fit_predict(x, y, fold_train, np.asarray([holdout]), alpha)[0]),
+        "y_pred": float(model.predict(x[[holdout]])[0]),
         "selected_alpha": alpha,
         "inner_rmse": inner_rmse,
         "inner_r2": inner_r2,
-        "diketone_prediction": fit_predict(x, y, fold_train, diketone, alpha),
+        "nonzero_features": int(np.count_nonzero(model.coef_)),
+        "orbital_nonzero_features": int(
+            np.count_nonzero(
+                model.coef_[np.asarray([name.startswith("orbital:") for name in names], dtype=bool)]
+            )
+        ),
+        "diketone_prediction": model.predict(x[diketone]),
     }
 
 
-def plot_yy(outer: pd.DataFrame, external: pd.DataFrame, path: Path) -> None:
-    values = np.r_[outer["y_true"], outer["y_pred"], external[TARGET], external["prediction"]]
+def plot_yy(
+    outer: pd.DataFrame,
+    regression: pd.DataFrame,
+    external: pd.DataFrame,
+    path: Path,
+) -> None:
+    """Plot full-fit, nested-LOOCV, and excluded-substrate predictions."""
+    values = np.r_[
+        outer["y_true"],
+        outer["y_pred"],
+        regression[TARGET],
+        regression["fulltrain_prediction"],
+        external[TARGET],
+        external["prediction"],
+    ]
     low, high = float(np.nanmin(values) - 0.25), float(np.nanmax(values) + 0.25)
-    fig, ax = plt.subplots(figsize=(5.0, 4.8))
-    ax.scatter(outer["y_true"], outer["y_pred"], color="#3d6f8e", s=36, edgecolor="white", linewidth=0.45, label=f"Nested outer LOOCV (n={len(outer)})")
+    fig, ax = plt.subplots(figsize=(4.3, 4.15))
+    ax.scatter(
+        regression[TARGET],
+        regression["fulltrain_prediction"],
+        color="black",
+        s=22,
+        alpha=0.72,
+        linewidth=0,
+        zorder=3,
+        label=f"Regression (N={len(regression)})",
+    )
+    ax.scatter(
+        outer["y_true"],
+        outer["y_pred"],
+        facecolors="none",
+        edgecolors="#3d6f8e",
+        s=46,
+        linewidth=0.9,
+        zorder=4,
+        label=f"Nested LOOCV (N={len(outer)})",
+    )
     if not external.empty:
-        ax.scatter(external[TARGET], external["prediction"], color="#c53d3d", s=58, edgecolor="white", linewidth=0.55, label=f"Excluded monoketones (n={len(external)})")
-    ax.plot([low, high], [low, high], color="0.2", linewidth=1.0)
-    ax.set(xlim=(low, high), ylim=(low, high), aspect="equal", xlabel=r"Experimental $\Delta\Delta G^\ddagger$ [kcal/mol]", ylabel=r"Predicted $\Delta\Delta G^\ddagger$ [kcal/mol]")
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
-    ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.4)
+        ax.scatter(
+            external[TARGET], external["prediction"], color="#c53d3d",
+            marker="X", s=58, edgecolor="black", linewidth=0.45, zorder=5,
+            label=f"Excluded (N={len(external)})",
+        )
+    ax.plot([low, high], [low, high], color="0.55", linewidth=1.0, zorder=0)
+    ax.set(
+        xlim=(low, high),
+        ylim=(low, high),
+        aspect="equal",
+        xlabel=r"Experimental $\Delta\Delta G^\ddagger$ [kcal/mol]",
+        ylabel=r"Predicted $\Delta\Delta G^\ddagger$ [kcal/mol]",
+    )
+    ax.xaxis.label.set_size(12)
+    ax.yaxis.label.set_size(12)
+    ax.tick_params(axis="both", labelsize=10.5)
+    regression_r2 = float(r2_score(regression[TARGET], regression["fulltrain_prediction"]))
+    cv_r2 = float(r2_score(outer["y_true"], outer["y_pred"]))
+    ax.text(
+        0.04,
+        0.96,
+        rf"Regression $R^2$ = {regression_r2:.2f}" + "\n" + rf"Nested LOOCV $R^2$ = {cv_r2:.2f}",
+        transform=ax.transAxes,
+        va="top",
+        fontsize=11.5,
+    )
+    ax.legend(frameon=False, fontsize=9.2, loc="lower right")
+    ax.grid(False)
     fig.tight_layout()
     fig.savefig(path, dpi=500)
     plt.close(fig)
 
 
+PRIMARY_DIKETONE_CHECKS = (
+    ("a", "initial", "2"),
+    ("b", "initial", "1"),
+    ("c", "initial", "2"),
+    ("d", "initial", "1"),
+    ("e", "initial", "2"),
+    ("f", "initial", "1"),
+    ("a", "final", "2-4"),
+    ("e", "final", "2-3"),
+)
+
+
+def save_outer_diketone_uncertainty(
+    dike_matrix: np.ndarray,
+    dike_entries: list[str],
+    full_dike: pd.DataFrame,
+    outer: pd.DataFrame,
+    semiquant_exp8: object,
+) -> dict[str, float]:
+    """Summarize selectivity variation across the 83 outer-fold models."""
+
+    def primary_value(prediction: dict[str, float], group: str, stage: str) -> tuple[float, bool]:
+        """Return the requested semiquantitative percentage and top-match flag."""
+        simulation = semiquant_exp8.simulate_full(prediction, group)
+        if stage == "initial":
+            row = semiquant_exp8.max_metrics(simulation, group)[1]
+        else:
+            row = semiquant_exp8.final_metrics(simulation, group)[0]
+        return float(row["predicted_percent"]), bool(row["top_match"])
+
+    full_prediction = dict(
+        zip(full_dike["entry"].astype(str), full_dike["prediction"].astype(float))
+    )
+    model_rows: list[dict[str, object]] = []
+    primary_values: list[dict[str, float]] = []
+    for model_id, values in enumerate(dike_matrix):
+        prediction = dict(zip(dike_entries, np.asarray(values, dtype=float)))
+        _, details = semiquant_exp8.evaluate_predictions(f"outer_{model_id}", prediction)
+        quantified = pd.DataFrame(details).dropna(subset=["observed_percent"])
+        errors = quantified["abs_error_percent"].to_numpy(dtype=float)
+        checks: list[bool] = []
+        failed: list[str] = []
+        row_values: dict[str, float] = {}
+        for group, stage, expected in PRIMARY_DIKETONE_CHECKS:
+            percent, match = primary_value(prediction, group, stage)
+            checks.append(match)
+            if not match:
+                failed.append(f"{group}:{stage}:{expected}")
+            row_values[f"{group}_{stage}"] = percent
+        primary_values.append(row_values)
+        model_rows.append(
+            {
+                "outer_model": model_id,
+                "holdout_entry": str(outer.iloc[model_id]["entry"]),
+                "holdout_name": str(outer.iloc[model_id]["name"]),
+                "checks_passed": int(sum(checks)),
+                "all_8_correct": bool(all(checks)),
+                "failed_checks": ";".join(failed),
+                "semiquant_rmse_percent": float(np.sqrt(np.mean(errors**2))),
+                "semiquant_mae_percent": float(np.mean(errors)),
+            }
+        )
+
+    primary_frame = pd.DataFrame(primary_values)
+    primary_rows: list[dict[str, object]] = []
+    for group, stage, expected in PRIMARY_DIKETONE_CHECKS:
+        key = f"{group}_{stage}"
+        values = primary_frame[key].to_numpy(dtype=float)
+        matches = [
+            primary_value(dict(zip(dike_entries, row)), group, stage)[1]
+            for row in dike_matrix
+        ]
+        full_percent, full_match = primary_value(full_prediction, group, stage)
+        observed = (
+            semiquant_exp8.MAX_TARGETS[group]["dr_percent"] if stage == "initial" else np.nan
+        )
+        primary_rows.append(
+            {
+                "group": group,
+                "stage": stage,
+                "expected": expected,
+                "observed_percent": observed,
+                "fulltrain_percent": full_percent,
+                "fulltrain_top_match": full_match,
+                "outer83_top_match_fraction": float(np.mean(matches)),
+                "outer83_mean_percent": float(np.mean(values)),
+                "outer83_median_percent": float(np.median(values)),
+                "outer83_sd_percent": float(np.std(values, ddof=1)),
+                "outer83_p16_percent": float(np.percentile(values, 16)),
+                "outer83_p84_percent": float(np.percentile(values, 84)),
+                "outer83_min_percent": float(np.min(values)),
+                "outer83_max_percent": float(np.max(values)),
+            }
+        )
+    primary = pd.DataFrame(primary_rows)
+    extended_rows = list(primary_rows)
+    for group in EXTERNAL_DIKETONE_SERIES:
+        values = []
+        for model_values in dike_matrix:
+            prediction = dict(zip(dike_entries, np.asarray(model_values, dtype=float)))
+            simulation = semiquant_exp8.simulate_full(prediction, group)
+            values.append(float(sum(simulation["intermediate_abs"].values())))
+        full_simulation = semiquant_exp8.simulate_full(full_prediction, group)
+        full_percent = float(sum(full_simulation["intermediate_abs"].values()))
+        values = np.asarray(values, dtype=float)
+        extended_rows.append(
+            {
+                "group": group,
+                "stage": "peak_total",
+                "expected": "80%",
+                "observed_percent": 80.0,
+                "fulltrain_percent": full_percent,
+                "fulltrain_top_match": np.nan,
+                "outer83_top_match_fraction": np.nan,
+                "outer83_mean_percent": float(np.mean(values)),
+                "outer83_median_percent": float(np.median(values)),
+                "outer83_sd_percent": float(np.std(values, ddof=1)),
+                "outer83_p16_percent": float(np.percentile(values, 16)),
+                "outer83_p84_percent": float(np.percentile(values, 84)),
+                "outer83_min_percent": float(np.min(values)),
+                "outer83_max_percent": float(np.max(values)),
+            }
+        )
+    extended = pd.DataFrame(extended_rows)
+    model_metrics = pd.DataFrame(model_rows)
+    metric_summary = {
+        "outer_model_n": int(len(model_metrics)),
+        "models_8_of_8": int(model_metrics["all_8_correct"].sum()),
+        "models_8_of_8_fraction": float(model_metrics["all_8_correct"].mean()),
+        "semiquant_rmse_median_percent": float(model_metrics["semiquant_rmse_percent"].median()),
+        "semiquant_rmse_p16_percent": float(model_metrics["semiquant_rmse_percent"].quantile(0.16)),
+        "semiquant_rmse_p84_percent": float(model_metrics["semiquant_rmse_percent"].quantile(0.84)),
+        "semiquant_rmse_min_percent": float(model_metrics["semiquant_rmse_percent"].min()),
+        "semiquant_rmse_max_percent": float(model_metrics["semiquant_rmse_percent"].max()),
+    }
+    primary.to_csv(DATA_DIR / "diketone_primary8_outer83_68_interval.csv", index=False)
+    extended.to_csv(
+        DATA_DIR / "diketone_primary8_xy_outer83_68_interval.csv", index=False
+    )
+    model_metrics.to_csv(DATA_DIR / "diketone_outer83_model_metrics.csv", index=False)
+    pd.DataFrame([metric_summary]).to_csv(
+        DATA_DIR / "diketone_outer83_uncertainty_summary.csv", index=False
+    )
+
+    labels = [f"{row.group} {row.stage}" for row in extended.itertuples(index=False)]
+    medians = extended["outer83_median_percent"].to_numpy(dtype=float)
+    lower = medians - extended["outer83_p16_percent"].to_numpy(dtype=float)
+    upper = extended["outer83_p84_percent"].to_numpy(dtype=float) - medians
+    positions = np.arange(len(labels))
+    fig, ax = plt.subplots(figsize=(8.4, 4.5))
+    ax.errorbar(
+        positions,
+        medians,
+        yerr=np.vstack((lower, upper)),
+        fmt="o",
+        color="#3d6f8e",
+        ecolor="#7294aa",
+        capsize=4,
+        label="Outer 83 median and 68% interval",
+    )
+    ax.scatter(
+        positions,
+        extended["fulltrain_percent"],
+        marker="D",
+        color="#b44b3f",
+        s=30,
+        label="Full-train model",
+    )
+    observed = extended["observed_percent"].to_numpy(dtype=float)
+    has_observed = np.isfinite(observed)
+    ax.scatter(
+        positions[has_observed], observed[has_observed], marker="x", color="#222222", s=42,
+        label="Experiment",
+    )
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels, rotation=35, ha="right")
+    ax.set_ylabel("Reported selectivity / monoalcohol fraction (%)")
+    ax.set_ylim(0, 106)
+    ax.grid(axis="y", color="#dddddd", linewidth=0.6)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False, fontsize=8, loc="lower left")
+    fig.tight_layout()
+    fig.savefig(
+        VALIDATION_DIR / "diketone_primary8_xy_outer83_68_interval.png", dpi=350
+    )
+    plt.close(fig)
+    return metric_summary
+
+
+def save_model_comparison(current_summary: dict[str, object]) -> None:
+    """Keep the adopted model and archived orbital-free comparator side by side."""
+    archived_summary_path = ORBITAL_FREE_SUMMARY_PATH
+    rows = [
+        {
+            "model": "Projected C=O pi*",
+            "feature_n": int(current_summary["feature_n"]),
+            "nested_outer_r2": float(current_summary["nested_outer_r2"]),
+            "nested_outer_rmse_kcal_mol": float(current_summary["nested_outer_rmse"]),
+            "diketone_top_checks": int(current_summary["diketone_top_checks"]),
+            "diketone_check_n": int(current_summary["diketone_check_n"]),
+            "diketone_semiquant_rmse_percent": float(
+                current_summary.get(
+                    "diketone_af_semiquant_rmse_percent",
+                    current_summary["diketone_semiquant_rmse_percent"],
+                )
+            ),
+            "diketone_evaluation_series": "a-f (matched comparator scope)",
+        }
+    ]
+    if archived_summary_path.exists():
+        archived = pd.read_csv(archived_summary_path).iloc[0]
+        rows.append(
+            {
+                "model": "Orbital-free EE/ES",
+                "feature_n": int(archived["feature_n"]),
+                "nested_outer_r2": float(archived["nested_outer_r2"]),
+                "nested_outer_rmse_kcal_mol": float(archived["nested_outer_rmse"]),
+                "diketone_top_checks": int(archived["diketone_top_checks"]),
+                "diketone_check_n": int(archived["diketone_check_n"]),
+                "diketone_semiquant_rmse_percent": float(
+                    archived["diketone_semiquant_rmse_percent"]
+                ),
+                "diketone_evaluation_series": "a-f (matched comparator scope)",
+            }
+        )
+    comparison = pd.DataFrame(rows)
+    comparison.to_csv(DATA_DIR / "model_comparison_current_vs_orbital_free.csv", index=False)
+    if len(comparison) != 2:
+        return
+    colors = ["#3d6f8e", "#8f8f8f"]
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.4))
+    axes[0].bar(comparison["model"], comparison["nested_outer_r2"], color=colors)
+    axes[0].set_ylabel("Nested outer LOOCV $R^2$")
+    axes[0].set_ylim(0, 1)
+    axes[1].bar(
+        comparison["model"], comparison["diketone_semiquant_rmse_percent"], color=colors
+    )
+    axes[1].set_ylabel("Diketone a-f RMSE [percentage points]")
+    for ax in axes:
+        ax.tick_params(axis="x", labelrotation=18)
+        for label in ax.get_xticklabels():
+            label.set_ha("right")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(axis="y", color="#dddddd", linewidth=0.6)
+    fig.tight_layout()
+    fig.savefig(VALIDATION_DIR / "current_vs_orbital_free.png", dpi=350)
+    plt.close(fig)
+
+
 def main() -> None:
+    """Validate frozen inputs, fit the model, and regenerate reported outputs."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workers", type=int, default=20)
-    parser.add_argument("--skip-nested", action="store_true", help="Reuse an existing outer_predictions.csv if available.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=20,
+        help="Parallel strict outer folds (1-20; default: 20).",
+    )
+    parser.add_argument(
+        "--skip-nested",
+        action="store_true",
+        help="Reuse existing outer prediction files (not a full reproduction check).",
+    )
+    parser.add_argument(
+        "--no-excel-refresh",
+        action="store_true",
+        help="Use installed metadata without synchronizing the active Excel file.",
+    )
+    parser.add_argument(
+        "--skip-contribution-cubes",
+        action="store_true",
+        help="Skip the optional 498 display-cube exports.",
+    )
+    parser.add_argument(
+        "--verify-inputs-only",
+        action="store_true",
+        help="Verify all frozen hashes and array schemas, then exit.",
+    )
     args = parser.parse_args()
     workers = min(max(args.workers, 1), 20)
 
-    ensure_frozen_inputs()
+    payload = ensure_frozen_inputs()
+    if args.verify_inputs_only:
+        print(f"Verified {len(verify_input_manifest())} frozen input files.")
+        return
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
-    payload = pd.read_pickle(BUNDLE_PATH)
+    train_manifest = pd.read_csv(TRAIN_ROWS_PATH)
+    train = train_manifest["row_index"].to_numpy(dtype=int)
+    refresh_audit = None
+    if not args.no_excel_refresh:
+        payload, train, refresh_audit = refresh_inputs_from_excel(
+            payload, train_manifest
+        )
+    if refresh_audit is not None:
+        print(f"Excel refresh: {json.dumps(refresh_audit, sort_keys=True)}", flush=True)
     meta = payload["meta"].copy()
     raw = {block: np.asarray(payload["raw_blocks"][block], dtype=float) for block in BLOCKS}
     coords = {block: np.asarray(payload["coords"][block], dtype=int) for block in BLOCKS}
-    y = meta[TARGET].astype(float).to_numpy()
-    train = pd.read_csv(TRAIN_ROWS_PATH)["row_index"].to_numpy(dtype=int)
-    diketone = np.flatnonzero(meta["entry"].astype(str).str.match(r"^[a-f]").to_numpy())
+    meta, raw, appended_diketone = append_external_diketone_series(
+        meta, raw, coords
+    )
+    y = pd.to_numeric(meta[TARGET], errors="coerce").to_numpy(dtype=float)
+    diketone_pattern = rf"[a-fxy](?:{'|'.join(DIKETONE_ENTRY_SUFFIXES)})"
+    diketone = np.flatnonzero(
+        meta["entry"].astype(str).str.fullmatch(diketone_pattern).to_numpy()
+    )
+    if len(appended_diketone) != 24 or len(diketone) != 96:
+        raise ValueError(
+            "Expected 72 a-f and 24 x/y diketone pathways, got "
+            f"{len(diketone)} total and {len(appended_diketone)} appended."
+        )
     if len(train) != 83:
         raise ValueError(f"Expected the frozen 83-point training manifest, got {len(train)} rows.")
+    for block in BLOCKS:
+        if raw[block].shape[1] != EXPECTED_FULL_GRID_N:
+            raise ValueError(
+                f"Expected {EXPECTED_FULL_GRID_N} {block} full-grid values, got {raw[block].shape[1]}."
+            )
+        selected_n = int(in_bounds(coords[block]).sum())
+        if selected_n != EXPECTED_SELECTED_GRID_N:
+            raise ValueError(
+                f"Expected {EXPECTED_SELECTED_GRID_N} selected {block} grids, got {selected_n}."
+            )
 
     x_full, names, _ = build_features(raw, coords, train)
-    if x_full.shape[1] != 214:
-        raise ValueError(f"Expected 214 features, got {x_full.shape[1]}.")
-    full_alpha, full_inner_rmse, full_inner_r2 = inner_best(raw, coords, y, train)
-    model = Lasso(alpha=full_alpha, fit_intercept=True, max_iter=50000, tol=1e-5).fit(x_full[train], y[train])
+    if x_full.shape[1] != EXPECTED_FEATURE_N:
+        raise ValueError(f"Expected {EXPECTED_FEATURE_N} features, got {x_full.shape[1]}.")
+    full_inner_predictions, full_candidate_rmse = inner_path_scores(raw, coords, y, train)
+    full_best = int(np.argmin(full_candidate_rmse))
+    full_alpha = float(ALPHAS[full_best])
+    full_inner_rmse = float(full_candidate_rmse[full_best])
+    full_inner_r2 = float(r2_score(y[train], full_inner_predictions[full_best]))
+    model = Lasso(
+        alpha=full_alpha,
+        fit_intercept=True,
+        max_iter=LASSO_FIT_MAX_ITER,
+        tol=LASSO_FIT_TOL,
+    ).fit(x_full[train], y[train])
     prediction = model.predict(x_full)
+    pd.DataFrame(
+        {
+            "alpha": ALPHAS,
+            "current_style_loocv_rmse": full_candidate_rmse,
+            "current_style_loocv_r2": [
+                r2_score(y[train], candidate) for candidate in full_inner_predictions
+            ],
+        }
+    ).to_csv(DATA_DIR / "fulltrain_inner_alpha_path.csv", index=False)
 
     outer_path = DATA_DIR / "outer_predictions.csv"
     dike_matrix_path = DATA_DIR / "diketone_predictions_by_outer_model.csv"
     if args.skip_nested and not (outer_path.exists() and dike_matrix_path.exists()):
-        for source_name, destination in (
-            ("outer_predictions.csv", outer_path),
-            ("diketone_predictions_by_outer_model.csv", dike_matrix_path),
-        ):
-            source = ARCHIVED_VALIDATION_DIR / source_name
-            if not source.exists():
-                raise FileNotFoundError(f"Validated nested result is missing: {source}")
-            shutil.copy2(source, destination)
-    if args.skip_nested and ARCHIVED_SEMIQUANT_DETAIL.exists():
-        shutil.copy2(ARCHIVED_SEMIQUANT_DETAIL, DATA_DIR / "diketone_semiquant_validated_detail.csv")
-    if args.skip_nested and outer_path.exists() and dike_matrix_path.exists():
+        raise FileNotFoundError("--skip-nested requires current outer prediction files.")
+    if args.skip_nested:
         outer = pd.read_csv(outer_path)
-        dike_matrix = pd.read_csv(dike_matrix_path).to_numpy(dtype=float)
+        # Predictions are reusable after entry renumbering, but their display
+        # metadata must always follow the active workbook.
+        holdout_indices = outer["holdout_index"].to_numpy(dtype=int)
+        outer["entry"] = meta.loc[holdout_indices, "entry"].astype(str).to_numpy()
+        outer["name"] = meta.loc[holdout_indices, "name"].astype(str).to_numpy()
+        outer.to_csv(outer_path, index=False)
+        dike_frame = pd.read_csv(dike_matrix_path)
+        expected_columns = meta.loc[diketone, "entry"].astype(str).tolist()
+        if dike_frame.columns.tolist() != expected_columns:
+            raise ValueError(
+                "Stored outer-model diketone predictions do not match the current "
+                "a-f/x/y evaluation scope; rerun without --skip-nested."
+            )
+        dike_matrix = dike_frame.to_numpy(dtype=float)
     else:
         rows: list[dict[str, object]] = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -234,6 +1003,10 @@ def main() -> None:
         outer.to_csv(outer_path, index=False)
         pd.DataFrame(dike_matrix, columns=meta.loc[diketone, "entry"].astype(str)).to_csv(dike_matrix_path, index=False)
 
+    pd.DataFrame({"feature": names, "coefficient": model.coef_}).loc[
+        lambda frame: frame["coefficient"].ne(0)
+    ].to_csv(DATA_DIR / "nonzero_coefficients.csv", index=False)
+
     contribution = pd.DataFrame({"entry": meta["entry"].astype(str), "name": meta["name"].astype(str), "InChIKey": meta["InChIKey"].astype(str), TARGET: y, "test": meta["test"].to_numpy(), "fulltrain_prediction": prediction})
     for block in BLOCKS:
         mask = np.asarray([name.startswith(f"{block}:") for name in names], dtype=bool)
@@ -241,6 +1014,50 @@ def main() -> None:
     contribution["intercept"] = float(model.intercept_)
     contribution["role"] = np.where(np.isin(np.arange(len(meta)), train), "training", np.where(np.isin(np.arange(len(meta)), diketone), "diketone_test", "excluded_monoketone"))
     contribution.to_csv(DATA_DIR / "fulltrain_predictions_and_contributions.csv", index=False)
+
+    if not args.skip_contribution_cubes:
+        # These display cubes are regenerated from the frozen atom-geometry
+        # cache, so the external Gaussian archive is not needed.
+        from export_current_model_contribution_cubes import (  # noqa: PLC0415
+            A24_OUTPUT,
+            export_contribution_cubes,
+        )
+
+        cube_manifest = export_contribution_cubes(
+            meta,
+            raw,
+            coords,
+            train,
+            x_full,
+            names,
+            model,
+            rows=train,
+        )
+        print(
+            f"Contribution cubes: {len(cube_manifest)} substrates / "
+            f"{len(cube_manifest) * len(BLOCKS)} files",
+            flush=True,
+        )
+        a24_rows = train[meta.loc[train, "entry"].astype(str).eq("A24")]
+        if len(a24_rows) != 1:
+            raise ValueError("A24 must identify exactly one current training row.")
+        a24_cube_manifest = export_contribution_cubes(
+            meta,
+            raw,
+            coords,
+            train,
+            x_full,
+            names,
+            model,
+            output_dir=A24_OUTPUT,
+            rows=train,
+            reference_row=int(a24_rows[0]),
+        )
+        print(
+            f"A24-relative contribution cubes: {len(a24_cube_manifest)} substrates / "
+            f"{len(a24_cube_manifest) * len(BLOCKS)} files",
+            flush=True,
+        )
 
     dike = contribution.iloc[diketone].copy()
     dike = dike.rename(columns={"fulltrain_prediction": "prediction"})
@@ -250,7 +1067,28 @@ def main() -> None:
     external["error"] = external["prediction"] - external[TARGET]
     external.to_csv(DATA_DIR / "excluded_monoketone_predictions.csv", index=False)
 
-    plot_yy(outer, external, VALIDATION_DIR / "yy_nested_outer_and_excluded.png")
+    regression = contribution.loc[contribution["role"].eq("training")].copy()
+    plot_yy(
+        outer,
+        regression,
+        external,
+        VALIDATION_DIR / "yy_nested_outer_and_excluded.png",
+    )
+    # Regenerate the report-ready contribution distribution in the normal
+    # current-model run, rather than requiring a separate spatial-analysis run.
+    from analyze_current_model_spatial_contributions import (  # noqa: PLC0415
+        plot_block_contributions,
+    )
+
+    spatial_figure_dir = VALIDATION_DIR / "spatial_analysis"
+    spatial_figure_dir.mkdir(parents=True, exist_ok=True)
+    plot_block_contributions(
+        x_full,
+        names,
+        model.coef_,
+        train,
+        spatial_figure_dir / "centered_block_contribution_violins.png",
+    )
     from graph import (  # noqa: PLC0415
         plot_component_contribution_series,
         reaction_concentration_plot_complex,
@@ -258,20 +1096,167 @@ def main() -> None:
     )
 
     selectivity = save_diketone_selectivity_summary(dike, DATA_DIR / "diketone_selectivity_summary.csv")
-    for group, temperature in {"a": 273.15, "b": 298.15, "c": 298.15, "d": 298.15, "e": 298.15, "f": 298.15}.items():
+    import diketone_metrics as semiquant_exp8  # noqa: PLC0415
+
+    semiquant_summary, semiquant_detail = semiquant_exp8.evaluate_predictions(
+        "current_projected_orbital_model",
+        dict(zip(dike["entry"].astype(str), dike["prediction"].astype(float))),
+    )
+    semiquant_detail = pd.DataFrame(semiquant_detail)
+    semiquant_detail.to_csv(DATA_DIR / "diketone_semiquant_detail.csv", index=False)
+    quantified = semiquant_detail.dropna(subset=["observed_percent"])
+    semiquant_rmse = float(
+        np.sqrt(np.mean(quantified["abs_error_percent"].to_numpy(dtype=float) ** 2))
+    )
+    af_quantified = quantified[
+        quantified["target"].astype(str).str.match(r"^[a-f]:")
+    ]
+    xy_quantified = quantified[
+        quantified["target"].astype(str).str.match(r"^[xy]:")
+    ]
+    af_rmse = float(
+        np.sqrt(np.mean(af_quantified["abs_error_percent"].to_numpy(dtype=float) ** 2))
+    )
+    xy_rmse = float(
+        np.sqrt(np.mean(xy_quantified["abs_error_percent"].to_numpy(dtype=float) ** 2))
+    )
+    uncertainty = save_outer_diketone_uncertainty(
+        dike_matrix,
+        meta.loc[diketone, "entry"].astype(str).tolist(),
+        dike,
+        outer.sort_values("fold_id").reset_index(drop=True),
+        semiquant_exp8,
+    )
+    for group, temperature in {
+        "a": 273.15,
+        "b": 298.15,
+        "c": 298.15,
+        "d": 298.15,
+        "e": 298.15,
+        "f": 298.15,
+        "x": 273.0,
+        "y": 273.0,
+    }.items():
         ordered = [f"{group}{suffix}" for suffix in ("1", "2", "3", "4", "13", "14", "23", "24", "31", "32", "41", "42")]
         values = dike.set_index("entry").loc[ordered, "prediction"].to_numpy(dtype=float)
         reaction_concentration_plot_complex(values, T=temperature, a0=1, save_path=VALIDATION_DIR / f"diketone_{group}_progress.png")
 
-    a_entries = [f"A{i}" for i in range(1, 14)] + ["H1"]
-    plot_component_contribution_series(contribution, "electrostatic", a_entries, "A1", VALIDATION_DIR / "A1_A13_H1_electrostatic_vs_experiment.png", "A1--A13 + Benzoylacetonitrile")
-    e_entries = [entry for entry in contribution["entry"] if str(entry).startswith("E")]
+    def numbered_entries(prefix: str, lower: int, upper: int) -> list[str]:
+        """Return numerically sorted current entry labels within a series."""
+        candidates: list[tuple[int, str]] = []
+        for entry in contribution["entry"].astype(str):
+            match = re.fullmatch(rf"{re.escape(prefix)}(\d+)(?:\([^)]*\))?", entry)
+            if match and lower <= int(match.group(1)) <= upper:
+                candidates.append((int(match.group(1)), entry))
+        return [entry for _, entry in sorted(set(candidates))]
+
+    a_entries = numbered_entries("A", 1, 13)
+    plot_component_contribution_series(
+        contribution,
+        "electrostatic",
+        a_entries,
+        "A1",
+        VALIDATION_DIR / "A1_A13_electrostatic_vs_experiment.png",
+        "A1--A13 series",
+    )
+    e_entries = numbered_entries("E", 1, 99)
     plot_component_contribution_series(contribution, "electronic", list(e_entries), "E4", VALIDATION_DIR / "E_series_electronic_vs_experiment.png", "E series")
-    a_late = [f"A{i}" for i in range(13, 25)]
-    c_entries = [f"C{i}" for i in range(1, 12)]
-    d_entries = [entry for entry in contribution["entry"] if re.match(r"^D(?:[1-9]|1[0-5])", str(entry))]
-    plot_component_contribution_series(contribution, "electronic", a_late, "A13", VALIDATION_DIR / "A13_A24_electronic_vs_experiment.png", "A13--A24 series")
-    plot_component_contribution_series(contribution, "electronic", c_entries, "C1", VALIDATION_DIR / "C1_C11_electronic_vs_experiment.png", "C1--C11 series")
+    a_all = numbered_entries("A", 1, 99)
+    plot_component_contribution_series(
+        contribution,
+        "electrostatic",
+        [*a_entries, "A24"],
+        "A24",
+        VALIDATION_DIR / "A_series_electrostatic_vs_experiment.png",
+        "A series relative to A24",
+        xlabel="electrostatic descriptor contribution [kcal/mol]",
+        ylabel=r"$\Delta\Delta G^\ddagger_{\mathrm{expt.}}$ [kcal/mol]",
+        show_grid=False,
+        avoid_label_overlap=True,
+        reference_label="A24",
+        label_fontsize=8.5,
+        figure_size=(4.2, 5.6),
+        regression_line_color="0.55",
+        equal_axis_scale=True,
+        x_tick_step=1.0,
+        label_fontweight="bold",
+    )
+    a_late = numbered_entries("A", 14, 99)
+    c_entries = numbered_entries("C", 1, 99)
+    d_entries = numbered_entries("D", 1, 99)
+    a_late_reference = a_late[0]
+    plot_component_contribution_series(
+        contribution, "electronic", a_late, a_late_reference,
+        VALIDATION_DIR / "A_late_series_electronic_vs_experiment.png",
+        f"{a_late[0]}--{a_late[-1]} series",
+    )
+    plot_component_contribution_series(
+        contribution, "electronic", c_entries, "A24",
+        VALIDATION_DIR / "C_series_electronic_vs_experiment.png",
+        "C series relative to A24",
+        xlabel="electronic descriptor contribution [kcal/mol]",
+        ylabel=r"$\Delta\Delta G^\ddagger_{\mathrm{expt.}}$ [kcal/mol]",
+        show_grid=False,
+        avoid_label_overlap=True,
+        reference_label="A24",
+        regression_excluded_entries=("C16", "C11"),
+        series_label="Included in linear fit",
+        excluded_label="Excluded from linear fit",
+        label_fontsize=8.5,
+        figure_size=(4.2, 5.2),
+        regression_line_color="0.55",
+        equal_axis_scale=True,
+        x_tick_step=1.0,
+        label_fontweight="bold",
+    )
+    combined_series_path = VALIDATION_DIR / "A_C_series_contribution_comparison.png"
+    combined_fig, combined_axes = plt.subplots(1, 2, figsize=(8.8, 4.4))
+    plot_component_contribution_series(
+        contribution,
+        "electrostatic",
+        [*a_entries, "A24"],
+        "A24",
+        combined_series_path,
+        "A series relative to A24",
+        xlabel="electrostatic descriptor contribution [kcal/mol]",
+        ylabel=r"$\Delta\Delta G^\ddagger_{\mathrm{expt.}}$ [kcal/mol]",
+        show_grid=False,
+        avoid_label_overlap=True,
+        reference_label="A24",
+        label_fontsize=8.5,
+        regression_line_color="0.55",
+        square_axes=True,
+        x_tick_step=1.0,
+        y_tick_step=1.0,
+        label_fontweight="bold",
+        ax=combined_axes[0],
+    )
+    plot_component_contribution_series(
+        contribution,
+        "electronic",
+        c_entries,
+        "A24",
+        combined_series_path,
+        "C series relative to A24",
+        xlabel="electronic descriptor contribution [kcal/mol]",
+        ylabel=r"$\Delta\Delta G^\ddagger_{\mathrm{expt.}}$ [kcal/mol]",
+        show_grid=False,
+        avoid_label_overlap=True,
+        reference_label="A24",
+        regression_excluded_entries=("C16", "C11"),
+        series_label="Included in linear fit",
+        excluded_label="Excluded from linear fit",
+        label_fontsize=8.5,
+        regression_line_color="0.55",
+        square_axes=True,
+        x_tick_step=1.0,
+        y_tick_step=1.0,
+        label_fontweight="bold",
+        ax=combined_axes[1],
+    )
+    combined_fig.tight_layout(w_pad=1.2)
+    combined_fig.savefig(combined_series_path, dpi=500)
+    plt.close(combined_fig)
     c_added_names = (
         "5-methyl-3-heptanone",
         "dicyclopropyl ketone",
@@ -279,40 +1264,141 @@ def main() -> None:
         "5-Chloro-2-pentanone",
     )
     c_added_labels = {
-        "5-methyl-3-heptanone": "C102",
-        "dicyclopropyl ketone": "dicyclopropyl ketone",
-        "6-methyl-5-hepten-2-one": "6-methyl-5-hepten-2-one",
-        "5-Chloro-2-pentanone": "C101 (5-chloro-2-pentanone)",
+        name: str(contribution.loc[contribution["name"].eq(name), "entry"].iloc[0])
+        for name in c_added_names
+        if contribution["name"].eq(name).any()
     }
     c_augmented = plot_component_contribution_series(
         contribution, "electronic", c_entries, "C1",
-        VALIDATION_DIR / "C1_C11_plus_added_electronic_vs_experiment.png",
-        "C1--C11 + added aliphatic ketones",
+        VALIDATION_DIR / "C_series_highlighted_electronic_vs_experiment.png",
+        f"{c_entries[0]}--{c_entries[-1]} with highlighted aliphatic ketones",
         highlighted_names=c_added_names,
         highlighted_labels=c_added_labels,
         series_label="C series",
         highlight_label="Added aliphatic ketones",
     )
-    c_augmented.to_csv(DATA_DIR / "C1_C11_plus_added_electronic_values.csv", index=False)
-    plot_component_contribution_series(contribution, "electronic", list(d_entries), "D4", VALIDATION_DIR / "D1_D15_electronic_vs_experiment.png", "D1--D15 series")
+    c_augmented.to_csv(DATA_DIR / "C_series_highlighted_electronic_values.csv", index=False)
+    plot_component_contribution_series(
+        contribution, "electronic", list(d_entries), "D4",
+        VALIDATION_DIR / "D_series_electronic_vs_experiment.png",
+        f"{d_entries[0]}--{d_entries[-1]} series",
+    )
+    for legacy_path in (
+        VALIDATION_DIR / "A1_A13_H1_electrostatic_vs_experiment.png",
+        VALIDATION_DIR / "A13_A24_electronic_vs_experiment.png",
+        VALIDATION_DIR / "C1_C11_electronic_vs_experiment.png",
+        VALIDATION_DIR / "C1_C11_plus_added_electronic_vs_experiment.png",
+        VALIDATION_DIR / "D1_D15_electronic_vs_experiment.png",
+        VALIDATION_DIR / "A_series_electronic_vs_experiment.png",
+        DATA_DIR / "C1_C11_plus_added_electronic_values.csv",
+    ):
+        legacy_path.unlink(missing_ok=True)
 
-    validated_detail_path = DATA_DIR / "diketone_semiquant_validated_detail.csv"
-    semiquant_mae = math.nan
-    if validated_detail_path.exists():
-        validated_detail = pd.read_csv(validated_detail_path)
-        semiquant_mae = float(validated_detail["abs_error_percent"].dropna().mean())
     summary = {
         "training_n": int(len(train)), "feature_n": int(len(names)), "fulltrain_selected_alpha": full_alpha,
+        "fulltrain_fit_r2": float(r2_score(y[train], prediction[train])),
+        "fulltrain_fit_rmse": float(
+            math.sqrt(mean_squared_error(y[train], prediction[train]))
+        ),
+        "fulltrain_intercept": float(model.intercept_),
         "fulltrain_inner_loocv_r2": full_inner_r2, "fulltrain_inner_loocv_rmse": full_inner_rmse,
         "fulltrain_nonzero_features": int(np.count_nonzero(model.coef_)),
+        "fulltrain_orbital_nonzero": int(
+            np.count_nonzero(
+                model.coef_[
+                    np.asarray([name.startswith("orbital:") for name in names], dtype=bool)
+                ]
+            )
+        ),
         "nested_outer_r2": float(r2_score(outer["y_true"], outer["y_pred"])),
         "nested_outer_rmse": float(math.sqrt(mean_squared_error(outer["y_true"], outer["y_pred"]))),
         "nested_outer_mae": float(mean_absolute_error(outer["y_true"], outer["y_pred"])),
         "diketone_top_checks": int(selectivity["ok"].sum()), "diketone_check_n": int(len(selectivity)),
-        "validated_diketone_semiquant_mae_percent": semiquant_mae,
+        "diketone_semiquant_top_checks": int(semiquant_summary["top_checks_passed"]),
+        "diketone_semiquant_check_n": int(semiquant_summary["top_checks_total"]),
+        "diketone_semiquant_metric_n": int(len(quantified)),
+        "diketone_semiquant_mae_percent": float(semiquant_summary["semiquant_mae_percent"]),
+        "diketone_semiquant_rmse_percent": semiquant_rmse,
+        "diketone_af_semiquant_rmse_percent": af_rmse,
+        "diketone_xy_semiquant_rmse_percent": xy_rmse,
+        "diketone_evaluation_series": "a,b,c,d,e,f,x,y",
+        "outer_models_8_of_8": int(uncertainty["models_8_of_8"]),
+        "outer_models_8_of_8_fraction": float(uncertainty["models_8_of_8_fraction"]),
+        **{
+            f"{block}_fullgrid_scale": float(np.std(raw[block][train])) for block in BLOCKS
+        },
     }
     pd.DataFrame([summary]).to_csv(DATA_DIR / "summary.csv", index=False)
-    (DATA_DIR / "model_specification.json").write_text(json.dumps({"descriptor": "electronic/electrostatic compact grid plus max/min summaries", "bounds_grid_units": EE_BOUNDS, "grid_spacing_bohr": 2, "alpha_candidates": ALPHAS, "frozen_input_bundle": str(BUNDLE_PATH.relative_to(ROOT)), "training_manifest": str(TRAIN_ROWS_PATH.relative_to(ROOT))}, indent=2) + "\n", encoding="utf-8")
+    save_model_comparison(summary)
+    (DATA_DIR / "model_specification.json").write_text(
+        json.dumps(
+            {
+                "status": "current_model",
+                "descriptor_version": DESCRIPTOR_VERSION,
+                "descriptor_blocks": list(BLOCKS),
+                "orbital_definition": (
+                    "normalize(sum_i <psi_i|pi*_C=O>/(epsilon_i-epsilon_HOMO) psi_i), then square"
+                ),
+                "precut_full_grid_n_per_block": EXPECTED_FULL_GRID_N,
+                "electrostatic_coordinate_alignment": "electronic coordinate order",
+                "electrostatic_zero_padded_coordinates": [[-7, 5, -12]],
+                "grid_block_scaling": (
+                    "one scalar SD over every pre-cut raw grid value in the current training fold"
+                ),
+                "bounds_grid_units": EE_BOUNDS,
+                "selected_grid_n_per_block": EXPECTED_SELECTED_GRID_N,
+                "summary_features_per_block": ["max", "min"],
+                "summary_scaling": "one training-fold SD per summary feature",
+                "grid_spacing_bohr": 2,
+                "model": "Lasso",
+                "fit_solver": {
+                    "max_iter": LASSO_FIT_MAX_ITER,
+                    "tolerance": LASSO_FIT_TOL,
+                },
+                "path_solver": {
+                    "max_iter": LASSO_PATH_MAX_ITER,
+                    "tolerance": LASSO_PATH_TOL,
+                },
+                "alpha_candidates": ALPHAS,
+                "alpha_selection": "minimum inner LOOCV RMSE",
+                "nested_validation": "strict outer LOOCV; held-out row excluded from all scaling and selection",
+                "diketone_used_for_model_selection": False,
+                "external_diketone_series": list(EXTERNAL_DIKETONE_SERIES),
+                "diketone_evaluation_series": list("abcdefxy"),
+                "input_arrays": str(MODEL_ARRAYS_PATH.relative_to(ROOT)),
+                "input_metadata": str(MODEL_METADATA_PATH.relative_to(ROOT)),
+                "input_provenance": str(MODEL_PROVENANCE_PATH.relative_to(ROOT)),
+                "input_manifest": str(INPUT_MANIFEST_PATH.relative_to(ROOT)),
+                "orbital_cache": str(ORBITAL_CACHE_PATH.relative_to(ROOT)),
+                "training_manifest": str(TRAIN_ROWS_PATH.relative_to(ROOT)),
+                "metadata_source": str(ACTIVE_EXCEL.relative_to(ROOT)),
+                "metadata_join_key": "InChIKey",
+                "orbital_free_comparator_summary": str(
+                    ORBITAL_FREE_SUMMARY_PATH.relative_to(ROOT)
+                ),
+                "contribution_cube_export": {
+                    "directory": "data/validation/current_model/contribution_cubes",
+                    "scope": "all 83 full-training substrates",
+                    "blocks": list(BLOCKS),
+                    "effect_definition": "(x_substrate - mean(x_training)) * beta",
+                    "grid_spacing_bohr": 2,
+                    "model_coordinate_domain": "positive-y folded compact grid",
+                    "cube_coordinate_domain": "full-y symmetric display grid",
+                    "cell_center_definition": "(i - sign(i)/2) * 2 Bohr",
+                    "y_expansion": "half of each folded effect at +y and half at -y",
+                    "summary_features": "max/min effects are listed in the manifest CSV",
+                    "additional_reference_export": {
+                        "directory": "data/validation/current_model/contribution_cubes_relative_to_A24",
+                        "reference": "A24 benzophenone",
+                        "effect_definition": "(x_substrate - x_A24) * beta",
+                    },
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print(pd.DataFrame([summary]).to_string(index=False), flush=True)
 
 

@@ -1,0 +1,27 @@
+{
+  "examples": [
+    "benzophenone_opt_freq.gjf",
+    "benzophenone_sp.gjf"
+  ],
+  "program": "Gaussian 16 Revision A.03",
+  "charge": 0,
+  "multiplicity": 1,
+  "optimization_frequency": {
+    "method": "B3LYP-D3(BJ)",
+    "basis": "def2-SVP",
+    "final_scf_energy_hartree": -576.269761070,
+    "sum_electronic_thermal_free_energy_hartree": -576.115446,
+    "lowest_frequency_cm-1": 40.9659,
+    "imaginary_frequency_count": 0,
+    "absolute_energy_tolerance_hartree": 0.00005,
+    "absolute_frequency_tolerance_cm-1": 5.0
+  },
+  "single_point": {
+    "method": "wB97XD",
+    "basis": "def2-TZVP",
+    "solvation": "SMD(methanol)",
+    "scf_energy_hartree": -576.650088229,
+    "absolute_energy_tolerance_hartree": 0.00005
+  },
+  "reference_normal_termination": true
+}

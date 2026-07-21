@@ -1,3 +1,12 @@
+"""Legacy plotting utilities plus figures shared by the adopted model.
+
+The historical three-field analysis accumulated many plotting and kinetic
+helpers in this module.  New paper-model code should use only the explicitly
+imported figure helpers; model fitting and validation live in
+``libs/current_model.py``.  Diketone summary kinetics delegate to the tested
+implementation in ``libs/diketone_metrics.py``.
+"""
+
 import glob
 import os
 import re
@@ -8,6 +17,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.patches import Rectangle, Polygon
+from matplotlib.ticker import MultipleLocator
+from matplotlib.transforms import Bbox
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from rdkit import Chem
 from rdkit.Chem import Draw, PandasTools
@@ -121,6 +132,14 @@ def _preferred_cv_column(df_results: pd.DataFrame) -> str:
 
 
 def evaluate_result(path):
+    """Score every legacy CV/regression column and write a results CSV.
+
+    ``path`` is the ``*_regression.pkl`` table produced by
+    :mod:`libs.regression`; it must contain ``ΔΔG.expt.`` plus paired ``cv``
+    and ``regression`` prediction columns in kcal/mol.  The preferred CV column
+    name is returned after RMSE and R-squared values are written beside the
+    pickle as ``*_results.csv``.
+    """
     df=pd.read_pickle(path)
     df_results=pd.DataFrame(index=df.filter(like='cv').columns)
     df_results["cv_RMSE"]=df_results.index.map(lambda column: nan_rmse(df[column].values,df["ΔΔG.expt."].values))
@@ -133,6 +152,14 @@ def evaluate_result(path):
     return best_cv_column
 
 def best_parameter(path):
+    """Reconstruct per-grid contributions for the selected legacy model.
+
+    ``path`` names a ``*_results.csv`` file with matching ``*_regression.csv``
+    coefficients and ``*_regression.pkl`` predictions.  Folded coefficients
+    are applied to unfolded electronic, electrostatic, and LUMO fields; an XLSX
+    summary is written and the augmented DataFrame is returned.  Energies and
+    contributions follow the source model's kcal/mol target scale.
+    """
     results = pd.read_csv(path, index_col=0)
     best_cv_column = _preferred_cv_column(results)
     coef=pd.read_csv(path.replace("_results.csv","_regression.csv"), index_col=0)
@@ -141,6 +168,7 @@ def best_parameter(path):
     df=pd.read_pickle(path.replace("_results.csv","_regression.pkl"))
     columns=df.filter(like='electronic_unfold').columns.tolist()+df.filter(like='electrostatic_unfold').columns.tolist()+df.filter(like='lumo_unfold').columns.tolist()
     def calc_cont(column):
+        """Multiply one unfolded descriptor column by its folded coefficient."""
         x,y,z=map(int, re.findall(r'[+-]?\d+', column))
         coef_column=column.replace(f"_unfold {x} {y} {z}","_coef")
         return df[column]*coef.at[f'{x} {abs(y)} {z}',coef_column]#*np.sign(z)
@@ -843,6 +871,12 @@ def _prepare_skeleton_contribution_delta(
     ref_inchikey: str = BENZOPHENONE_REF_INCHIKEY,
     train_value: int = 0,
 ) -> pd.DataFrame:
+    """Select A-E training rows and reference-center their contributions.
+
+    The input requires identifiers, ``test``, and the three ``*_cont`` columns
+    in kcal/mol.  Returned ``*_cont_delta`` columns are differences from the
+    row identified by ``ref_inchikey`` within the selected training subset.
+    """
     required_cols = [
         "test",
         "entry",
@@ -883,6 +917,12 @@ def _prepare_skeleton_contribution_delta(
 
 
 def _skeleton_contribution_summary(delta_df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize each contribution delta by skeleton group and component.
+
+    The result has ``group``, ``feature``, ``n``, ``mean``, ``median``,
+    ``min``, ``max``, and sample ``std`` columns; energy statistics retain the
+    input contribution unit (kcal/mol in this workflow).
+    """
     rows: list[dict[str, object]] = []
     for group, group_df in delta_df.groupby("skeleton_group"):
         for feature, column, _ in CONTRIBUTION_VIOLIN_COMPONENTS:
@@ -907,6 +947,7 @@ def _skeleton_contribution_summary(delta_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _skeleton_highlight_rows(delta_df: pd.DataFrame) -> pd.DataFrame:
+    """Extract the configured representative entries for violin annotations."""
     rows: list[dict[str, object]] = []
     by_entry = delta_df.set_index("entry", drop=False)
     column_by_feature = {
@@ -947,6 +988,13 @@ def _plot_skeleton_violin_grid(
     title: str,
     highlights: pd.DataFrame | None = None,
 ) -> None:
+    """Render three horizontal skeleton-group contribution violins.
+
+    ``delta_df`` follows :func:`_prepare_skeleton_contribution_delta` and may be
+    paired with highlight rows from :func:`_skeleton_highlight_rows`.
+    Contributions are plotted in kcal/mol and the figure is written to
+    ``save_path``.
+    """
     groups = [
         group
         for group in ["A", "B", "C", "D", "E"]
@@ -1184,6 +1232,7 @@ def plot_group_contribution_violins_by_skeleton(
 
 
 def _mol_from_smiles_for_grid(smiles: object):
+    """Build an RDKit molecule with computed 2D coordinates, or return None."""
     mol = Chem.MolFromSmiles(str(smiles))
     if mol is not None:
         Chem.rdDepictor.Compute2DCoords(mol)
@@ -1550,6 +1599,7 @@ def plot_pair_stacked_contributions(
 
     # --- annotate contribution values (right-aligned, vertically aligned) ---
     def annotate_value(val: float, y: float) -> None:
+        """Draw a signed contribution value at the requested vertical position."""
         ax.text(
             value_right_x,
             y,
@@ -1604,6 +1654,7 @@ def plot_pair_stacked_contributions(
 
 
 def _safe_entry_filename(entry: str) -> str:
+    """Convert an entry label into a stable, portable filename token."""
     name = (
         entry.replace("(trans)", "_trans")
         .replace("(cis)", "_cis")
@@ -1665,12 +1716,34 @@ def plot_component_contribution_series(
     highlighted_labels: dict[str, str] | None = None,
     series_label: str = "Series",
     highlight_label: str = "Highlighted substrates",
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    show_grid: bool = True,
+    avoid_label_overlap: bool = False,
+    reference_label: str | None = None,
+    regression_excluded_entries: tuple[str, ...] = (),
+    excluded_label: str = "Excluded from linear fit",
+    label_fontsize: float = 7.5,
+    figure_size: tuple[float, float] = (5.3, 4.2),
+    regression_line_color: str = "0.2",
+    square_axes: bool = False,
+    equal_axis_scale: bool = False,
+    x_tick_step: float | None = None,
+    y_tick_step: float | None = None,
+    swap_axes: bool = False,
+    label_fontweight: str = "normal",
+    ax=None,
 ) -> pd.DataFrame:
     """Plot experimental energy changes against one contribution component.
 
     Entries are compared with ``reference_entry``.  Named substrates can be
     overlaid with a distinct marker, which is useful when extending a series
-    with structurally related training examples that have separate IDs.
+    with structurally related training examples that have separate IDs.  Both
+    axes are changes in kcal/mol.  ``regression_excluded_entries`` remain
+    visible but are omitted from the fitted line and correlation.  When ``ax``
+    is supplied the caller owns figure saving/closing; otherwise ``save_path``
+    is written directly.  The returned rows include the centered values and a
+    ``used_for_linear_fit`` flag.
     """
     contribution_column = contribution_column or f"{component}_contribution"
     required = {"entry", "name", contribution_column, target_column}
@@ -1679,28 +1752,45 @@ def plot_component_contribution_series(
         raise ValueError(f"DataFrame is missing required columns: {', '.join(missing)}")
 
     highlighted_labels = highlighted_labels or {}
-    selected = df["entry"].astype(str).isin(entries) | df["name"].isin(highlighted_names)
+    selected = (
+        df["entry"].astype(str).isin(entries)
+        | df["name"].isin(highlighted_names)
+        | df["entry"].astype(str).eq(reference_entry)
+    )
     subset = df.loc[selected].copy()
     reference_rows = subset.loc[subset["entry"].astype(str).eq(reference_entry)]
     if reference_rows.empty:
         raise ValueError(f"Reference entry '{reference_entry}' was not found in the selected data.")
 
     reference = reference_rows.iloc[0]
-    x_column = "contribution_change"
-    y_column = "experimental_change"
-    subset[x_column] = subset[contribution_column] - float(reference[contribution_column])
-    subset[y_column] = subset[target_column] - float(reference[target_column])
+    subset["contribution_change"] = (
+        subset[contribution_column] - float(reference[contribution_column])
+    )
+    subset["experimental_change"] = (
+        subset[target_column] - float(reference[target_column])
+    )
+    if swap_axes:
+        x_column, y_column = "experimental_change", "contribution_change"
+    else:
+        x_column, y_column = "contribution_change", "experimental_change"
     points = subset.loc[subset["entry"].astype(str).ne(reference_entry)].copy()
-    if len(points) < 3:
+    excluded_from_fit = points["entry"].astype(str).isin(regression_excluded_entries)
+    fit_points = points.loc[~excluded_from_fit].copy()
+    if len(fit_points) < 3:
         raise ValueError("At least three non-reference points are required for a component series plot.")
 
-    slope, intercept = np.polyfit(points[x_column], points[y_column], 1)
-    correlation = float(np.corrcoef(points[x_column], points[y_column])[0, 1])
-    highlighted = points["name"].isin(highlighted_names)
-    base_points = points.loc[~highlighted]
+    slope, intercept = np.polyfit(fit_points[x_column], fit_points[y_column], 1)
+    correlation = float(np.corrcoef(fit_points[x_column], fit_points[y_column])[0, 1])
+    highlighted = points["name"].isin(highlighted_names) & ~excluded_from_fit
+    base_points = points.loc[~highlighted & ~excluded_from_fit]
     highlighted_points = points.loc[highlighted]
+    excluded_points = points.loc[excluded_from_fit]
 
-    fig, ax = plt.subplots(figsize=(5.3, 4.2))
+    owns_figure = ax is None
+    if owns_figure:
+        fig, ax = plt.subplots(figsize=figure_size)
+    else:
+        fig = ax.figure
     ax.axhline(0, color="0.7", linewidth=0.8)
     ax.axvline(0, color="0.7", linewidth=0.8)
     ax.scatter(
@@ -1713,25 +1803,139 @@ def plot_component_contribution_series(
             color="#f28e2b", marker="D", s=62, edgecolors="black",
             linewidths=0.55, zorder=4, label=highlight_label,
         )
+    if not excluded_points.empty:
+        ax.scatter(
+            excluded_points[x_column], excluded_points[y_column],
+            color="#d9534f", marker="X", s=72, edgecolors="black",
+            linewidths=0.55, zorder=4, label=excluded_label,
+        )
     ax.scatter([0], [0], marker="*", color="black", s=82, zorder=5)
-    for _, row in points.iterrows():
-        label = highlighted_labels.get(str(row["name"]), str(row["entry"]))
-        ax.annotate(label, (row[x_column], row[y_column]), xytext=(4, 3), textcoords="offset points", fontsize=7.5)
 
-    x_line = np.linspace(float(points[x_column].min()) - 0.08, float(points[x_column].max()) + 0.08, 100)
-    ax.plot(x_line, slope * x_line + intercept, color="0.2", linewidth=1.1)
-    ax.text(0.04, 0.96, rf"$R^2$ = {correlation ** 2:.2f}, $n$ = {len(points)}", transform=ax.transAxes, va="top", fontsize=10)
+    x_line = np.linspace(
+        float(fit_points[x_column].min()) - 0.08,
+        float(fit_points[x_column].max()) + 0.08,
+        100,
+    )
+    ax.plot(
+        x_line,
+        slope * x_line + intercept,
+        color=regression_line_color,
+        linewidth=1.1,
+        zorder=0,
+    )
+    ax.text(
+        0.04, 0.96,
+        rf"$R^2$ = {correlation ** 2:.2f}, N = {len(fit_points)}",
+        transform=ax.transAxes, va="top", fontsize=11,
+    )
     ax.set(
         title=title,
-        xlabel=f"{component.capitalize()} contribution change vs {reference_entry} [kcal/mol]",
-        ylabel=rf"Experimental $\Delta\Delta G^\ddagger$ change vs {reference_entry} [kcal/mol]",
+        xlabel=xlabel or f"{component.capitalize()} contribution change vs {reference_entry} [kcal/mol]",
+        ylabel=ylabel or rf"Experimental $\Delta\Delta G^\ddagger$ change vs {reference_entry} [kcal/mol]",
     )
-    if not highlighted_points.empty:
-        ax.legend(frameon=False, fontsize=8, loc="best")
-    ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.4)
-    fig.tight_layout()
-    fig.savefig(_ensure_output_dir(save_path), dpi=500)
-    plt.close(fig)
+    if x_tick_step is not None:
+        ax.xaxis.set_major_locator(MultipleLocator(x_tick_step))
+    if y_tick_step is not None:
+        ax.yaxis.set_major_locator(MultipleLocator(y_tick_step))
+    if equal_axis_scale:
+        ax.set_aspect("equal", adjustable="box")
+    elif square_axes:
+        ax.set_box_aspect(1)
+    labels = [
+        (
+            float(row[x_column]),
+            float(row[y_column]),
+            highlighted_labels.get(str(row["name"]), str(row["entry"])),
+        )
+        for _, row in points.iterrows()
+    ]
+    if reference_label:
+        labels.append((0.0, 0.0, reference_label))
+    if avoid_label_overlap:
+        # Greedily choose a nearby offset with the least display-space overlap.
+        # Labels are short entry IDs, so this deterministic placement is more
+        # stable across machines than a force-based layout.
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        occupied = []
+        for x_value, y_value, _ in labels:
+            display_x, display_y = ax.transData.transform((x_value, y_value))
+            occupied.append(Bbox.from_bounds(display_x - 6, display_y - 6, 12, 12))
+        offsets = (
+            (5, 5), (5, -12), (-20, 5), (-20, -12),
+            (6, 15), (-22, 15), (6, -22), (-22, -22),
+            (24, 3), (-38, 3), (24, -13), (-38, -13),
+            (24, 16), (-38, 16), (24, -25), (-38, -25),
+        )
+        for x_value, y_value, label in sorted(labels, key=lambda item: (item[1], item[0])):
+            best_offset = offsets[0]
+            best_score = float("inf")
+            for offset in offsets:
+                trial = ax.annotate(
+                    label, (x_value, y_value), xytext=offset,
+                    textcoords="offset points", fontsize=label_fontsize,
+                    fontweight=label_fontweight,
+                )
+                fig.canvas.draw()
+                box = trial.get_window_extent(renderer=renderer).expanded(1.08, 1.18)
+                overlap = sum(
+                    max(0.0, min(box.x1, other.x1) - max(box.x0, other.x0))
+                    * max(0.0, min(box.y1, other.y1) - max(box.y0, other.y0))
+                    for other in occupied
+                )
+                outside = (
+                    max(0.0, ax.bbox.x0 - box.x0)
+                    + max(0.0, box.x1 - ax.bbox.x1)
+                    + max(0.0, ax.bbox.y0 - box.y0)
+                    + max(0.0, box.y1 - ax.bbox.y1)
+                )
+                score = overlap + 1000.0 * outside + 0.01 * (offset[0] ** 2 + offset[1] ** 2)
+                trial.remove()
+                if score < best_score:
+                    best_score = score
+                    best_offset = offset
+            annotation = ax.annotate(
+                label,
+                (x_value, y_value),
+                xytext=best_offset,
+                textcoords="offset points",
+                fontsize=label_fontsize,
+                fontweight=label_fontweight,
+                arrowprops={"arrowstyle": "-", "color": "0.55", "lw": 0.45},
+            )
+            fig.canvas.draw()
+            occupied.append(annotation.get_window_extent(renderer=renderer).expanded(1.08, 1.18))
+    else:
+        for x_value, y_value, label in labels:
+            ax.annotate(
+                label, (x_value, y_value), xytext=(4, 3),
+                textcoords="offset points", fontsize=label_fontsize,
+                fontweight=label_fontweight,
+            )
+    if not highlighted_points.empty or not excluded_points.empty:
+        ax.legend(
+            frameon=False,
+            fontsize=9,
+            loc="upper left",
+            bbox_to_anchor=(0.025, 0.885),
+            borderaxespad=0,
+        )
+    ax.title.set_fontsize(13)
+    ax.xaxis.label.set_fontsize(11.5)
+    ax.yaxis.label.set_fontsize(11.5)
+    ax.tick_params(axis="both", labelsize=10.5)
+    if show_grid:
+        ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.4)
+    else:
+        ax.grid(False)
+    if owns_figure:
+        fig.tight_layout()
+        fig.savefig(_ensure_output_dir(save_path), dpi=500)
+        plt.close(fig)
+    subset["used_for_linear_fit"] = (
+        subset["entry"].astype(str).ne(reference_entry)
+        & ~subset["entry"].astype(str).isin(regression_excluded_entries)
+    )
     return subset
 
 
@@ -1779,6 +1983,7 @@ DIKETONE_FINAL_EXPECTED = {"a": "2-4", "e": "2-3"}
 
 
 def _diketone_rate(delta_g: float, temperature: float) -> float:
+    """Convert a barrier in kcal/mol to a relative Eyring rate."""
     return float(np.exp(-delta_g / (1.987e-3 * temperature)))
 
 
@@ -1786,82 +1991,15 @@ def _simulate_diketone_selectivity(
     pred_by_entry: dict[str, float],
     group: str,
 ) -> dict[str, dict[str, float]]:
-    temperature = DIKETONE_TEMPERATURES[group]
-    ordered = [pred_by_entry[f"{group}{suffix}"] for suffix in DIKETONE_ENTRY_ORDER]
-    (
-        k1,
-        k2,
-        k3,
-        k4,
-        k13p,
-        k14p,
-        k23p,
-        k24p,
-        k31p,
-        k32p,
-        k41p,
-        k42p,
-    ) = [_diketone_rate(value, temperature) for value in ordered]
+    """Delegate diketone kinetics to the shared, equal-rate-safe implementation."""
+    try:
+        from .diketone_metrics import simulate_full  # noqa: PLC0415
+    except ImportError:
+        # ``current_model.py`` also supports legacy execution with ``libs``
+        # directly on sys.path, where ``graph`` has no package parent.
+        from diketone_metrics import simulate_full  # type: ignore[no-redef]  # noqa: PLC0415
 
-    k1p_sum = k13p + k14p
-    k2p_sum = k23p + k24p
-    k3p_sum = k31p + k32p
-    k4p_sum = k41p + k42p
-    ka = k1 + k2 + k3 + k4
-    max_rate = max(k1, k2, k3, k4, k13p, k14p, k23p, k24p, k31p, k32p, k41p, k42p)
-    time_points = np.logspace(-10, 10, 1000) / max_rate
-
-    def intermediate(k_i: float, k_ip_sum: float, time_value: float) -> float:
-        denom = k_ip_sum - ka
-        if abs(denom) < 1e-300:
-            return 0.0
-        return k_i / denom * (np.exp(-ka * time_value) - np.exp(-k_ip_sum * time_value))
-
-    def final_product(k_i: float, k_ijp: float, k_ip_sum: float, time_value: float) -> float:
-        denom = k_ip_sum - ka
-        if abs(denom) < 1e-300:
-            return 0.0
-        term1 = (1 - np.exp(-ka * time_value)) / ka
-        term2 = (1 - np.exp(-k_ip_sum * time_value)) / k_ip_sum
-        return k_i * k_ijp / denom * (term1 - term2)
-
-    p1 = np.array([intermediate(k1, k1p_sum, t) for t in time_points])
-    p2 = np.array([intermediate(k2, k2p_sum, t) for t in time_points])
-    p3 = np.array([intermediate(k3, k3p_sum, t) for t in time_points])
-    p4 = np.array([intermediate(k4, k4p_sum, t) for t in time_points])
-    max_index = int(np.argmax(p1 + p2 + p3 + p4))
-    intermediate_abs = {
-        "1": float(p1[max_index] * 100),
-        "2": float(p2[max_index] * 100),
-        "3": float(p3[max_index] * 100),
-        "4": float(p4[max_index] * 100),
-    }
-
-    final_abs = {
-        "1-3": (
-            final_product(k1, k13p, k1p_sum, time_points[-1])
-            + final_product(k3, k31p, k3p_sum, time_points[-1])
-        )
-        * 100,
-        "1-4": (
-            final_product(k1, k14p, k1p_sum, time_points[-1])
-            + final_product(k4, k41p, k4p_sum, time_points[-1])
-        )
-        * 100,
-        "2-3": (
-            final_product(k2, k23p, k2p_sum, time_points[-1])
-            + final_product(k3, k32p, k3p_sum, time_points[-1])
-        )
-        * 100,
-        "2-4": (
-            final_product(k2, k24p, k2p_sum, time_points[-1])
-            + final_product(k4, k42p, k4p_sum, time_points[-1])
-        )
-        * 100,
-    }
-    final_total = sum(final_abs.values())
-    final_frac = {label: float(value / final_total * 100) for label, value in final_abs.items()}
-    return {"intermediate_abs": intermediate_abs, "final_frac": final_frac}
+    return simulate_full(pred_by_entry, group)
 
 
 def save_diketone_selectivity_summary(
@@ -1909,6 +2047,15 @@ def save_diketone_selectivity_summary(
 
 
 def make_cube(df, path):
+    """Write legacy per-substrate contribution cubes for three field blocks.
+
+    ``df`` must contain ``InChIKey``, ``ΔΔG.expt.``, ``temperature``, and
+    ``electronic_cont x y z``, ``electrostatic_cont x y z``, and
+    ``lumo_cont x y z`` columns.  Atom records are copied from the first
+    matching density cube under ``OUTPUT_ROOT`` and three files are written
+    below ``path/<InChIKey>``.  This routine preserves the historical cube
+    layout; new adopted-model exports use the dedicated export script.
+    """
     grid = np.array([re.findall(r'[+-]?\d+', col) for col in df.filter(like='electronic_cont ').columns]).astype(int)
     min=np.min(grid,axis=0).astype(int)
     print("min",min)
@@ -1932,7 +2079,6 @@ def make_cube(df, path):
     min=' '.join(map(str, (min+np.array([0.5,0.5,-0.5]))*n))
     for inchikey,expt,temp,value in zip(df.index,df["ΔΔG.expt."],df["temperature"],df.iloc[:,2:].values):
         dt = glob.glob(str(OUTPUT_ROOT / inchikey / "Dt*.cube"))[0]
-        # dt=f'/Volumes/SSD-PSM960U3-UW/CoMFA_calc/{inchikey}/Dt0.cube'
         with open(dt, 'r', encoding='UTF-8') as f:
             f.readline()
             f.readline()
@@ -1976,6 +2122,7 @@ def make_cube_with_sign_markers(df: pd.DataFrame, out_root: str | Path) -> None:
 
     # Collect contribution columns and corresponding grid indices (i, j, k).
     def extract_cont_columns(prefix: str):
+        """Return matching contribution columns and their integer grid indices."""
         cols = [c for c in df.columns if c.startswith(prefix + " ")]
         if not cols:
             raise ValueError(f"No columns starting with '{prefix} ' were found in df.")
@@ -2437,16 +2584,19 @@ def reaction_concentration_plot_complex(
     t.sort()
 
     def exp_decay(rate):
+        """Return a clipped exponential decay for one nonnegative rate."""
         if rate <= 0:
             return np.ones_like(t)
         return np.exp(-np.clip(rate * t, 0.0, 745.0))
 
     def one_minus_exp_over_rate(rate):
+        """Evaluate ``(1-exp(-rate*t))/rate`` including the zero-rate limit."""
         if rate <= 0:
             return t.copy()
         return -np.expm1(-np.clip(rate * t, 0.0, 745.0)) / rate
 
     def safe_species(values):
+        """Replace non-finite concentrations and clip them to physical bounds."""
         values = np.nan_to_num(values, nan=0.0, posinf=a0, neginf=0.0)
         return np.clip(values, 0.0, a0)
 
@@ -2455,6 +2605,7 @@ def reaction_concentration_plot_complex(
 
     # Intermediate concentrations Pi.
     def p_i(k_i, k_ip_sum):
+        """Return one intermediate concentration with its equal-rate limit."""
         if k_i <= 0:
             return np.zeros_like(t)
         scale = max(abs(k_ip_sum), abs(ka), 1.0)
@@ -2478,6 +2629,7 @@ def reaction_concentration_plot_complex(
 
     # Product concentrations Pij'.
     def pij_total(k_i, k_ijp, k_ip_sum):
+        """Return one final-product contribution with stable rate limits."""
         if k_i <= 0 or k_ijp <= 0:
             return np.zeros_like(t)
         scale = max(abs(k_ip_sum), abs(ka), 1.0)

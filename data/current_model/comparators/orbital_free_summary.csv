@@ -1,0 +1,2 @@
+training_n,feature_n,fulltrain_selected_alpha,fulltrain_inner_loocv_r2,fulltrain_inner_loocv_rmse,fulltrain_nonzero_features,nested_outer_r2,nested_outer_rmse,nested_outer_mae,diketone_top_checks,diketone_check_n,diketone_semiquant_top_checks,diketone_semiquant_check_n,diketone_semiquant_mae_percent,diketone_semiquant_rmse_percent
+83,214,0.01,0.8301831072619805,0.5406532114560116,54,0.8299705072560598,0.5409915374061086,0.4059343143816951,8,8,18,18,10.947101419240433,15.061635952719229

@@ -337,6 +337,7 @@ def plot_origin_regression_series(
             margin_x = 0.05 * x_span
 
             def candidate_position(sign: float) -> tuple[float, float]:
+                """Return one normal-offset label candidate around a point."""
                 xt = x0 + sign * d * nx
                 yt = y0 + sign * d * ny
                 return xt, yt

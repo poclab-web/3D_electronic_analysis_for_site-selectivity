@@ -1,11 +1,116 @@
+# Operating-system and editor artefacts
 .DS_Store
+~$*
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Python environments, caches, and local test artefacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.venv-*/
+venv/
+env/
+.mplconfig/
 timer.dat
+
+# Bulky or machine-specific serializations and bundles
 *.pkl
-data/eda/*
-data/test/*
-data/validation/*
-libs/render_molecule.py
-definition_grid.ipynb
-libs/__pycache__
-*_old*
+*.npy
 *.zip
+
+# Gaussian inputs, outputs, wavefunctions, cubes, and scratch files.
+# Calculation files live outside Git; the portable example exceptions below
+# intentionally permit only source input and human/machine-readable metadata.
+*.gjf
+*.com
+*.log
+*.out
+*.chk
+*.fchk
+*.rwf
+*.cube
+*.cub
+*.wfn
+*.wfx
+*.nbo
+*.47
+*.31
+*.int
+*.d2e
+*.skr
+fort.*
+**/gaussian_scratch/
+**/projected_orbital_tmp/
+**/projected_orbital_conformer_cache/
+
+!examples/gaussian/
+!examples/gaussian/**/
+!examples/gaussian/**/*.gjf
+!examples/gaussian/**/*.md
+!examples/gaussian/**/*.json
+
+# Accepted model: portable NPZ/CSV/JSON inputs and compact results under
+# data/current_model are deliberately Git-visible.  Mutable work products and
+# the superseded pickle bundle are not.
+/data/current_model/work/
+/data/current_model/inputs/model_input_bundle.pkl
+!/data/current_model/inputs/**/*.npz
+!/data/current_model/inputs/**/*.csv
+!/data/current_model/inputs/**/*.json
+!/data/current_model/inputs/**/*.md
+
+# Only the two reviewed external series are frozen inputs. New-series caches
+# remain ignored under data/validation until --promote-inputs is deliberately
+# used together with a model-specification and manifest update.
+/data/current_model/inputs/external_diketones/*/
+!/data/current_model/inputs/external_diketones/x_series/
+!/data/current_model/inputs/external_diketones/y_series/
+!/data/current_model/inputs/external_diketones/x_series/*.csv
+!/data/current_model/inputs/external_diketones/x_series/*.npz
+!/data/current_model/inputs/external_diketones/y_series/*.csv
+!/data/current_model/inputs/external_diketones/y_series/*.npz
+
+# Validation: retain only the final accepted current-model PNG figures.
+# Contribution cubes, viewer launchers/manifests, and external-diketone caches
+# are reproducible work products rather than publication inputs.
+/data/validation/*
+!/data/validation/current_model/
+/data/validation/current_model/*
+!/data/validation/current_model/*.png
+!/data/validation/current_model/spatial_analysis/
+/data/validation/current_model/spatial_analysis/*
+!/data/validation/current_model/spatial_analysis/*.png
+/data/validation/current_model/contribution_cubes/
+/data/validation/current_model/contribution_cubes_relative_to_A24/
+/data/validation/external_diketones/
+
+# Superseded legacy data exports.  Some are already tracked; an
+# ignore rule does not untrack them, so remove them from the index separately
+# after the external archive has been verified.
+/data/data.pkl
+/data/data.xlsx
+/data/datafeat.csv
+/data/data_electronic_electrostatic_lumo_*
+/data/Dataset prediction evaluation and prediction results/
+/data/Dataset prediction evaluation and prediction results.zip
+
+# Superseded exploratory/generated analyses.
+/data/eda/
+/data/test/
+/data/test.zip
+/definition_grid.ipynb
+
+# Working archives and non-code publication material are SSD-only.
+/analysis_runs/
+/paper/
+/reports/
+/reference/
+/memo/

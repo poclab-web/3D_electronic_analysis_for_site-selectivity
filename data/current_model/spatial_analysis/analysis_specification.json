@@ -1,0 +1,12 @@
+{
+  "training_n": 83,
+  "feature_n": 321,
+  "spatial_grid_n": 315,
+  "outer_model_n": 83,
+  "grid_spacing_bohr": 2.0,
+  "grid_unit_angstrom": 1.058354421806,
+  "fulltrain_alpha": 0.01,
+  "coefficient_nonzero_tolerance": 1e-12,
+  "model_changed": false,
+  "metadata_join_key": "InChIKey"
+}

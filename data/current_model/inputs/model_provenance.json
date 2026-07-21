@@ -1,0 +1,59 @@
+{
+  "format_version": 1,
+  "descriptor_version": "projected_co_pi_star_fullgrid_scaled_es_zero_pad_v1",
+  "blocks": [
+    "electronic",
+    "electrostatic",
+    "orbital"
+  ],
+  "metadata_columns": [
+    "entry",
+    "name",
+    "SMILES",
+    "InChIKey",
+    "temperature",
+    "ΔΔG.expt.",
+    "test"
+  ],
+  "row_count": 167,
+  "grid_count_per_block": {
+    "electronic": 4927,
+    "electrostatic": 4927,
+    "orbital": 4927
+  },
+  "conformer_generation": {
+    "software": "RDKit",
+    "embedding": "EmbedMultipleConfs with ETKDG defaults",
+    "random_seed": 1,
+    "force_field": "MMFF94",
+    "relative_energy_cutoff_kcal_mol": 5.0,
+    "rmsd_cutoff_angstrom": 0.5,
+    "maximum_conformers": 5
+  },
+  "quantum_chemistry": {
+    "reference_program": "Gaussian 16 Revision A.03",
+    "optimization_frequency": "B3LYP-D3(BJ)/def2-SVP",
+    "single_point": "wB97XD/def2-TZVP",
+    "solvation": "SMD(methanol)",
+    "symmetry": "nosymm",
+    "grid_tools": [
+      "formchk",
+      "cubegen",
+      "Multiwfn"
+    ],
+    "multiwfn_version": "not recorded for historical descriptor generation; frozen descriptors are canonical"
+  },
+  "legacy_bundle_sha256": "e3bc37b46bdb423f923e33a59f5b968ba1429764e51e1593b6b7bc7dbdab7a7c",
+  "legacy_bundle_provenance": {
+    "orbital_definition": "normalize(sum_i <psi_i|pi*_C=O>/(epsilon_i-epsilon_HOMO) psi_i), then square",
+    "grid_spacing_bohr": 2,
+    "electrostatic_zero_padded_coordinates": [
+      [
+        -7,
+        5,
+        -12
+      ]
+    ],
+    "identity_alignment": "InChIKey"
+  }
+}

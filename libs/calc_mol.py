@@ -12,12 +12,13 @@ Main features
 - Batch processing of molecules defined in an Excel sheet
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import time
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -58,11 +59,57 @@ def _positive_int_from_env(name: str, default: int) -> int:
 # - GAUSSIAN_MEMORY_GB  (positive integer)
 NUM_THREADS = _positive_int_from_env("GAUSSIAN_NUM_THREADS", os.cpu_count() or 1)
 MEMORY_GB = _positive_int_from_env("GAUSSIAN_MEMORY_GB", max(1, _total_ram_gb() // 2))
-OUTPUT_ROOT = os.path.join(os.path.expanduser("~"), "molecules")
+CONFORMER_NUM_THREADS = _positive_int_from_env(
+    "CALC_MOL_CONFORMER_THREADS", os.cpu_count() or 1
+)
+OUTPUT_ROOT = os.getenv("MOLECULES_ROOT", str(Path.home() / "molecules"))
 GAUSSIAN_RUN_COMMAND = os.getenv(
     "GAUSSIAN_RUN_COMMAND",
-    "source ~/.bash_profile && g16",
+    "g16",
 )
+FORMCHK_EXECUTABLE = os.getenv(
+    "FORMCHK_EXECUTABLE", shutil.which("formchk") or "formchk"
+)
+CUBEGEN_EXECUTABLE = os.getenv(
+    "CUBEGEN_EXECUTABLE", shutil.which("cubegen") or "cubegen"
+)
+GAUSSIAN_BACKUP_ROOT = os.getenv("GAUSSIAN_BACKUP_ROOT")
+
+
+def _normal_termination(path: str) -> bool:
+    """Return whether a Gaussian log ends normally."""
+    log = Path(path)
+    if not log.exists():
+        return False
+    with log.open("rb") as handle:
+        try:
+            handle.seek(-8192, os.SEEK_END)
+        except OSError:
+            handle.seek(0)
+        lines = [line.strip() for line in handle.read().splitlines() if line.strip()]
+    return bool(lines and lines[-1].startswith(b"Normal termination"))
+
+
+def normal_termination(path: str | Path) -> bool:
+    """Public path-like wrapper for strict Gaussian normal-termination checks."""
+    return _normal_termination(str(path))
+
+
+def _contains_log_marker(path: str, marker: bytes) -> bool:
+    """Return whether an existing Gaussian log contains *marker*."""
+    log = Path(path)
+    return log.exists() and marker in log.read_bytes()
+
+
+def _copy_if_distinct(source: str | Path, destination: str | Path) -> None:
+    """Copy a reusable calculation file while rejecting a self-copy."""
+    source_path = Path(source)
+    destination_path = Path(destination)
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Gaussian backup file is missing: {source_path}")
+    if source_path.resolve() == destination_path.resolve():
+        raise ValueError(f"Gaussian backup and destination are identical: {source_path}")
+    shutil.copy2(source_path, destination_path)
 
 
 def energy_cut(mol: Chem.Mol, res, max_energy: float) -> None:
@@ -306,39 +353,6 @@ def transform(conf: np.ndarray, carbonyl_atom) -> np.ndarray:
     return conf_rot.T
 
 
-def run_subprocess(gjf: str) -> Optional[subprocess.CompletedProcess]:
-    """Run Gaussian locally using g16 with a given input file.
-
-    This helper wraps a Gaussian 16 execution with the user's shell
-    initialization file.
-
-    Parameters
-    ----------
-    gjf : str
-        Path to the Gaussian input file (.gjf).
-
-    Returns
-    -------
-    subprocess.CompletedProcess | None
-        The completed process object if the command succeeds.
-        Returns ``None`` if a CalledProcessError occurs.
-    """
-    try:
-        result = subprocess.run(
-            "{cmd} {gjf}".format(cmd=GAUSSIAN_RUN_COMMAND, gjf=gjf),
-            shell=True,
-            check=True,
-            capture_output=True,
-            text=True,
-            executable="/bin/bash",
-        )
-        print(result)
-        return result
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e}")
-        return None
-
-
 def run_subprocess_remote(gjf: str, path: str = GAUSSIAN_RUN_COMMAND) -> None:
     """Run Gaussian via a shell/SSH command, feeding the gjf file to stdin.
 
@@ -357,23 +371,21 @@ def run_subprocess_remote(gjf: str, path: str = GAUSSIAN_RUN_COMMAND) -> None:
     None
         The Gaussian job is executed; no value is returned.
     """
-    try:
-        ssh_cmd = path
-        workdir = os.path.dirname(gjf)
-        log_path = gjf.replace(".gjf", ".log")
+    ssh_cmd = path
+    workdir = os.path.dirname(gjf)
+    log_path = gjf.replace(".gjf", ".log")
 
-        with open(gjf, "r") as gjf_file, open(log_path, "w") as log_file:
-            subprocess.run(
-                ssh_cmd,
-                shell=True,
-                check=True,
-                text=True,
-                input=gjf_file.read(),
-                stdout=log_file,
-                cwd=workdir,
-            )
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: {e}")
+    with open(gjf, "r") as gjf_file, open(log_path, "w") as log_file:
+        subprocess.run(
+            ssh_cmd,
+            shell=True,
+            check=True,
+            text=True,
+            input=gjf_file.read(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            cwd=workdir,
+        )
 
 
 def calc_ket(
@@ -396,7 +408,7 @@ def calc_ket(
        (``conformer_cut``).
     6. For each remaining conformer:
        - Either copy precomputed Gaussian optimization logs/chk/fchk/cubes
-         from a backup directory (``competitive_ketones_20250621``), or
+         from the optional ``GAUSSIAN_BACKUP_ROOT``, or
          generate a new optimization gjf and submit it with
          ``run_subprocess_remote``.
        - Parse the optimization log with cclib to obtain final coordinates
@@ -407,8 +419,8 @@ def calc_ket(
            * Write a SP gjf (WB97XD/def2TZVP, SMD-methanol) and submit it.
            * Run ``formchk`` and ``cubegen`` to produce density and ESP
              cube files.
-       - In all cases, generate additional cube files for
-         HOMO, LUMO, LUMO+1, LUMO+2 using ``cubegen``.
+       - Unless ``CALC_MOL_SKIP_FRONTIER_CUBES=1``, generate additional cube
+         files for HOMO, LUMO, LUMO+1, LUMO+2 using ``cubegen``.
 
     Finally, a marker file called ``done`` is written inside `out_path`.
 
@@ -438,11 +450,18 @@ def calc_ket(
 
     # Build and prepare the molecule
     mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"RDKit could not parse SMILES: {smiles}")
     mol = Chem.AddHs(mol)
 
     # Identify the carbonyl substructure [C(=O)(C)(C)]
     substruct_pattern = Chem.MolFromSmarts("[#6](=[#8])([#6])([#6])")
     substruct = mol.GetSubstructMatch(substruct_pattern)
+    if not substruct:
+        raise ValueError(
+            "The molecule does not contain the ketone alignment pattern "
+            "[#6](=[#8])([#6])([#6])."
+        )
 
     # Reorder substituent atoms so that downstream alignment is deterministic
     if int(substruct[3]) < int(substruct[2]):
@@ -453,38 +472,73 @@ def calc_ket(
         mol,
         numConfs=mol.GetNumAtoms() ** 2,
         randomSeed=1,
-        numThreads=0,
+        numThreads=CONFORMER_NUM_THREADS,
     )
+    if mol.GetNumConformers() == 0:
+        raise RuntimeError(f"RDKit failed to embed any conformers for {smiles}")
     res = AllChem.MMFFOptimizeMoleculeConfs(
         mol,
         maxIters=1000,
-        numThreads=0,
+        numThreads=CONFORMER_NUM_THREADS,
     )
 
     energy_cut(mol, res, 5)
     print("After energy_cut:", time.time() - start, "sec", len(mol.GetConformers()))
+    if mol.GetNumConformers() == 0:
+        raise RuntimeError("All conformers failed MMFF convergence or the energy cutoff.")
 
     conformer_cut(mol, min_rmse=0.5, max_num_conformer=5)
     print("After conformer_cut:", time.time() - start, "sec", len(mol.GetConformers()))
+    if mol.GetNumConformers() == 0:
+        raise RuntimeError("Conformer pruning removed every conformer.")
 
     # Process each remaining conformer
     for conf in mol.GetConformers():
         conf_id = conf.GetId()
 
-        # Backup directory that may already contain completed Gaussian results
-        backup_path = out_path.replace(
-            "competitive_ketones", "competitive_ketones_20250621"
+        # An optional, explicit backup root may contain reusable calculations.
+        backup_path = (
+            str(Path(GAUSSIAN_BACKUP_ROOT) / Path(out_path).name)
+            if GAUSSIAN_BACKUP_ROOT
+            else None
         )
         local_path = out_path
 
         # ---------- Optimization step (opt) ----------
         opt_log_name = f"opt{conf_id}.log"
-        opt_log_backup = os.path.join(backup_path, opt_log_name)
+        opt_log_backup = (
+            os.path.join(backup_path, opt_log_name) if backup_path else None
+        )
         opt_log_local = os.path.join(local_path, opt_log_name)
 
-        if os.path.isfile(opt_log_backup):
-            shutil.copy(opt_log_backup, opt_log_local)
+        if opt_log_backup and os.path.isfile(opt_log_backup):
+            _copy_if_distinct(opt_log_backup, opt_log_local)
             print(f"{opt_log_name} copied to {local_path}.")
+        elif _normal_termination(opt_log_local):
+            print(f"{opt_log_name} reused from {local_path}.")
+        elif (
+            _contains_log_marker(opt_log_local, b"Optimization completed.")
+            and os.path.isfile(os.path.join(out_path, f"opt{conf_id}.chk"))
+        ):
+            # Resume only the frequency part when an opt+freq job was
+            # interrupted after reaching the stationary point.
+            restart_gjf = os.path.join(out_path, f"opt{conf_id}_freq_restart.gjf")
+            restart_log = restart_gjf.replace(".gjf", ".log")
+            with open(restart_gjf, "w") as f:
+                print(
+                    f"%nprocshared={NUM_THREADS}\n"
+                    f"%mem={MEMORY_GB}GB\n"
+                    f"%chk={out_path}/opt{conf_id}.chk\n"
+                    "# freq B3LYP/def2SVP EmpiricalDispersion=GD3BJ "
+                    "geom=allcheck guess=read\n",
+                    file=f,
+                )
+            run_subprocess_remote(restart_gjf, run_path)
+            if not _normal_termination(restart_log):
+                raise RuntimeError(f"Frequency restart did not finish normally: {restart_log}")
+            archived_opt = os.path.join(out_path, f"opt{conf_id}_optimization_partial.log")
+            shutil.move(opt_log_local, archived_opt)
+            shutil.move(restart_log, opt_log_local)
         else:
             opt_gjf = os.path.join(out_path, f"opt{conf_id}.gjf")
             xyz_block = Chem.rdmolfiles.MolToXYZBlock(mol, confId=conf_id)
@@ -496,8 +550,8 @@ def calc_ket(
                     f"%nprocshared={NUM_THREADS}\n"
                     f"%mem={MEMORY_GB}GB\n"
                     f"%chk={out_path}/opt{conf_id}.chk\n"
-                    "# freq opt=calcfc B3LYP/def2SVP EmpiricalDispersion=GD3BJ "
-                    "optcyc=300 int=ultrafine\n\n"
+                    "# freq opt B3LYP/def2SVP EmpiricalDispersion=GD3BJ "
+                    "optcyc=300\n\n"
                     "good luck!\n\n"
                     f"{Chem.GetFormalCharge(mol)} 1\n"
                     f"{xyz_lines}"
@@ -506,38 +560,49 @@ def calc_ket(
 
             run_subprocess_remote(opt_gjf, run_path)
 
+        if not _normal_termination(opt_log_local):
+            raise RuntimeError(
+                f"Optimization/frequency calculation did not finish normally: {opt_log_local}"
+            )
+
         # Parse optimized geometry from the optimization log
         opt_log_for_cclib = os.path.join(out_path, f"opt{conf_id}.log")
         opt_data = cclib.io.ccread(opt_log_for_cclib)
+        if opt_data is None or not hasattr(opt_data, "atomcoords"):
+            raise ValueError(f"Failed to parse optimized geometry: {opt_log_for_cclib}")
 
         # ---------- Single-point step (sp) ----------
         sp_log_name = f"sp{conf_id}.log"
-        sp_log_backup = os.path.join(backup_path, sp_log_name)
+        sp_log_backup = (
+            os.path.join(backup_path, sp_log_name) if backup_path else None
+        )
         sp_log_local = os.path.join(local_path, sp_log_name)
 
         chk_path = f"{out_path}/sp{conf_id}.chk"
         fchk_path = f"{out_path}/sp{conf_id}.fchk"
 
-        if os.path.isfile(sp_log_backup):
+        if sp_log_backup and os.path.isfile(sp_log_backup):
             # Copy SP log, chk, fchk, and cube files from backup
-            shutil.copy(sp_log_backup, sp_log_local)
-            shutil.copy(
+            _copy_if_distinct(sp_log_backup, sp_log_local)
+            _copy_if_distinct(
                 sp_log_backup.replace(".log", ".chk"),
                 sp_log_local.replace(".log", ".chk"),
             )
-            shutil.copy(
+            _copy_if_distinct(
                 sp_log_backup.replace(".log", ".fchk"),
                 sp_log_local.replace(".log", ".fchk"),
             )
-            shutil.copy(
+            _copy_if_distinct(
                 sp_log_backup.replace("/sp", "/Dt").replace(".log", ".cube"),
                 sp_log_local.replace("/sp", "/Dt").replace(".log", ".cube"),
             )
-            shutil.copy(
+            _copy_if_distinct(
                 sp_log_backup.replace("/sp", "/ESP").replace(".log", ".cube"),
                 sp_log_local.replace("/sp", "/ESP").replace(".log", ".cube"),
             )
             print(f"{sp_log_name} copied to {local_path}.")
+        elif _normal_termination(sp_log_local) and os.path.isfile(chk_path):
+            print(f"{sp_log_name} reused from {local_path}.")
         else:
             # Align the final optimized coordinates to a common molecular frame
             # before single-point evaluation and cube generation.
@@ -559,43 +624,62 @@ def calc_ket(
                     f"%nprocshared={NUM_THREADS}\n"
                     f"%mem={MEMORY_GB}GB\n"
                     f"%chk={out_path}/sp{conf_id}.chk\n"
-                    "# wb97xd/def2tzvp scrf=(smd,solvent=methanol) nosymm "
-                    "int=ultrafine\n\n"
+                    "# wb97xd/def2tzvp scrf=(smd,solvent=methanol) nosymm\n\n"
                     "good luck!\n\n"
                     f"{Chem.GetFormalCharge(mol)} 1\n"
                     f"{coord_lines}"
                 )
                 print(gjf_input, file=f)
 
-            # Run SP, formchk, and cube generation
+            # Run the single-point calculation.
             run_subprocess_remote(sp_gjf, run_path)
+
+        if not _normal_termination(sp_log_local) or not os.path.isfile(chk_path):
+            raise RuntimeError(f"Single-point calculation did not finish normally: {sp_log_local}")
+
+        # Use argument lists so paths containing spaces remain intact.
+        if not os.path.isfile(fchk_path):
             subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    f"source ~/.bash_profile && formchk {chk_path} {fchk_path}",
-                ]
+                [FORMCHK_EXECUTABLE, chk_path, fchk_path],
+                check=True,
             )
 
-            dt_cube = f"{out_path}/Dt{conf_id}.cube"
+        dt_cube = f"{out_path}/Dt{conf_id}.cube"
+        if not os.path.isfile(dt_cube):
             subprocess.run(
                 [
-                    "bash",
-                    "-c",
-                    f"source ~/.bash_profile && cubegen {NUM_THREADS} Density=SCF {fchk_path} {dt_cube} -3 h",
-                ]
+                    CUBEGEN_EXECUTABLE,
+                    str(NUM_THREADS),
+                    "Density=SCF",
+                    fchk_path,
+                    dt_cube,
+                    "-3",
+                    "h",
+                ],
+                check=True,
             )
 
-            esp_cube = f"{out_path}/ESP{conf_id}.cube"
+        esp_cube = f"{out_path}/ESP{conf_id}.cube"
+        if not os.path.isfile(esp_cube):
             subprocess.run(
                 [
-                    "bash",
-                    "-c",
-                    f"source ~/.bash_profile && cubegen {NUM_THREADS} Potential=SCF {fchk_path} {esp_cube} -3 h",
-                ]
+                    CUBEGEN_EXECUTABLE,
+                    str(NUM_THREADS),
+                    "Potential=SCF",
+                    fchk_path,
+                    esp_cube,
+                    "-3",
+                    "h",
+                ],
+                check=True,
             )
 
         # ---------- Frontier orbitals (HOMO/LUMO etc.) ----------
+        # External prediction jobs can skip these large cubes because the
+        # projected-orbital descriptor is generated directly from the fchk.
+        if os.getenv("CALC_MOL_SKIP_FRONTIER_CUBES", "0") == "1":
+            continue
+
         # Read the MO indices from the single-point calculation, since the
         # orbital ordering can differ from the optimization/frequency job.
         sp_log_for_cclib = os.path.join(out_path, f"sp{conf_id}.log")
@@ -605,45 +689,26 @@ def calc_ket(
 
         homo_index = sp_data.homos[0]
 
-        homo_cube = f"{out_path}/HOMO{conf_id}.cube"
-        subprocess.run(
-            [
-                "bash",
-                "-c",
-                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 1} "
-                f"{fchk_path} {homo_cube} -3 h",
-            ]
+        orbital_cubes = (
+            (f"{out_path}/HOMO{conf_id}.cube", homo_index + 1),
+            (f"{out_path}/LUMO{conf_id}.cube", homo_index + 2),
+            (f"{out_path}/LUMO+1_{conf_id}.cube", homo_index + 3),
+            (f"{out_path}/LUMO+2_{conf_id}.cube", homo_index + 4),
         )
-
-        lumo_cube = f"{out_path}/LUMO{conf_id}.cube"
-        subprocess.run(
-            [
-                "bash",
-                "-c",
-                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 2} "
-                f"{fchk_path} {lumo_cube} -3 h",
-            ]
-        )
-
-        lumo1_cube = f"{out_path}/LUMO+1_{conf_id}.cube"
-        subprocess.run(
-            [
-                "bash",
-                "-c",
-                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 3} "
-                f"{fchk_path} {lumo1_cube} -3 h",
-            ]
-        )
-
-        lumo2_cube = f"{out_path}/LUMO+2_{conf_id}.cube"
-        subprocess.run(
-            [
-                "bash",
-                "-c",
-                f"source ~/.bash_profile && cubegen {NUM_THREADS} MO={homo_index + 4} "
-                f"{fchk_path} {lumo2_cube} -3 h",
-            ]
-        )
+        for cube_path, mo_number in orbital_cubes:
+            if not os.path.isfile(cube_path):
+                subprocess.run(
+                    [
+                        CUBEGEN_EXECUTABLE,
+                        str(NUM_THREADS),
+                        f"MO={mo_number}",
+                        fchk_path,
+                        cube_path,
+                        "-3",
+                        "h",
+                    ],
+                    check=True,
+                )
 
     # Mark completion
     with open(done_flag, "w") as f:
