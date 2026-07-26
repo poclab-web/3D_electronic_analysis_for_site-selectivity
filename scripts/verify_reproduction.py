@@ -25,10 +25,6 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 BLOCKS = ("electronic", "electrostatic", "orbital")
-ENTRY_SUFFIXES = ("1", "2", "3", "4", "13", "14", "23", "24", "31", "32", "41", "42")
-EXTERNAL_METADATA_COLUMNS = (
-    "entry", "name", "SMILES", "InChIKey", "temperature", "test"
-)
 TARGET = "ΔΔG.expt."
 
 
@@ -140,7 +136,7 @@ def _load_portable_inputs(root: Path) -> tuple[
 
 
 def verify_portable_inputs(root: Path = ROOT, expected: dict[str, Any] | None = None) -> dict[str, int]:
-    """Validate portable arrays, identities, external series, and features."""
+    """Validate portable arrays, training identities, and model features."""
     expected = load_expected(root) if expected is None else expected
     limits = expected["inputs"]
     metadata, raw, coords, provenance = _load_portable_inputs(root)
@@ -213,51 +209,7 @@ def verify_portable_inputs(root: Path = ROOT, expected: dict[str, Any] | None = 
         "Training target values do not match the training manifest.",
     )
 
-    extended_raw = {block: [raw[block]] for block in BLOCKS}
-    external_n = int(limits["external_rows_per_series"])
-    for series in ("x", "y"):
-        series_dir = input_dir / "external_diketones" / f"{series}_series"
-        rows_path = series_dir / "input_rows.csv"
-        arrays_path = series_dir / "external_raw_blocks_2bohr.npz"
-        _require(rows_path.is_file() and arrays_path.is_file(), f"External {series} inputs are incomplete.")
-        rows = pd.read_csv(rows_path)
-        _require(
-            tuple(rows.columns) == EXTERNAL_METADATA_COLUMNS,
-            f"{series}-series metadata columns must be {list(EXTERNAL_METADATA_COLUMNS)}.",
-        )
-        expected_entries = [f"{series}{suffix}" for suffix in ENTRY_SUFFIXES]
-        _require(len(rows) == external_n, f"Expected {external_n} {series}-series rows, found {len(rows)}.")
-        _require(rows["entry"].astype(str).tolist() == expected_entries, f"{series}-series entry order changed.")
-        _require(rows["InChIKey"].notna().all(), f"{series}-series contains a missing InChIKey.")
-        with np.load(arrays_path, allow_pickle=False) as archive:
-            required_arrays = {
-                "entries",
-                "inchikeys",
-                *(BLOCKS),
-                *(f"coords_{block}" for block in BLOCKS),
-            }
-            _require(
-                required_arrays.issubset(archive.files),
-                f"External {series} NPZ is missing arrays {sorted(required_arrays - set(archive.files))}.",
-            )
-            _require(
-                archive["entries"].astype(str).tolist() == rows["entry"].astype(str).tolist(),
-                f"{series}-series NPZ entry identities do not match input_rows.csv.",
-            )
-            _require(
-                archive["inchikeys"].astype(str).tolist()
-                == rows["InChIKey"].astype(str).tolist(),
-                f"{series}-series NPZ InChIKeys do not match input_rows.csv.",
-            )
-            for block in BLOCKS:
-                values = np.asarray(archive[block], dtype=float)
-                external_coords = np.asarray(archive[f"coords_{block}"], dtype=int)
-                _require(values.shape == (external_n, grid_n), f"Unexpected {series} {block} shape: {values.shape}")
-                _require(np.isfinite(values).all(), f"{series} {block} contains NaN or infinity.")
-                _require(np.array_equal(external_coords, coords[block]), f"{series} {block} coordinates changed.")
-                extended_raw[block].append(values)
-
-    combined_raw = {block: np.vstack(parts) for block, parts in extended_raw.items()}
+    combined_raw = raw
     combined_n = int(limits["combined_rows"])
     _require(all(values.shape[0] == combined_n for values in combined_raw.values()), "Combined row count is incorrect.")
 
@@ -297,8 +249,9 @@ def verify_saved_metrics(root: Path = ROOT, expected: dict[str, Any] | None = No
     rtol = float(expected["relative_tolerance"])
     data_dir = root / "data" / "current_model"
 
-    summary_path = data_dir / "summary.csv"
-    outer_path = data_dir / "outer_predictions.csv"
+    model_results = data_dir / "results" / "model"
+    summary_path = model_results / "summary.csv"
+    outer_path = model_results / "outer_predictions.csv"
     _require(summary_path.is_file(), f"Saved summary is missing: {summary_path}")
     _require(outer_path.is_file(), f"Saved outer predictions are missing: {outer_path}")
     summary_frame = pd.read_csv(summary_path)
@@ -422,7 +375,14 @@ def verify_spatial_analysis(
         )
 
     feature_names = feature_table["feature"].astype(str).to_numpy()
-    outer_predictions = pd.read_csv(root / "data" / "current_model" / "outer_predictions.csv")
+    outer_predictions = pd.read_csv(
+        root
+        / "data"
+        / "current_model"
+        / "results"
+        / "model"
+        / "outer_predictions.csv"
+    )
     outer_predictions = outer_predictions.sort_values("fold_id").reset_index(drop=True)
 
     with np.load(

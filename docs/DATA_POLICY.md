@@ -1,49 +1,105 @@
-# Data and artefact policy
+# Data and artifact policy
 
-このリポジトリは、論文で採用した current model を第三者が再実行・検証するための最小構成を保持します。探索過程の全成果物や Gaussian の作業ディレクトリを保存する場所ではありません。
+This repository is a compact, auditable package for reproducing the accepted
+model reported in the accompanying manuscript. It is not an archive of every
+exploratory analysis or quantum-chemistry working directory.
 
-## Git に含めるもの
+## Versioned in Git
 
-- 再現に必要な Python ソース、設定、依存関係情報、実行手順。
-- 実験値の原本 `data/Details_of_experimental_results.xlsx`。
-- `data/current_model/inputs/` の portable な凍結入力。対象形式は NPZ、CSV、JSON、Markdown で、pickle は対象外です。
-- `data/current_model/` の accepted model に対応する小容量の CSV、JSON、NPZ、README。予測値、係数、評価指標、空間解析の要約など、結果を照合するためのファイルを含みます。
-- `data/validation/current_model/` 直下と `data/validation/current_model/spatial_analysis/` の確定 PNG。
-- `examples/gaussian/` の最小例。Git に含められるのは Gaussian 入力 `.gjf`、説明 `.md`、期待値・provenance `.json` だけです。計算ログ、checkpoint、formatted checkpoint、cube、scratch は含めません。
+The following materials belong in the public repository:
 
-凍結入力の manifest には相対パス、サイズ、SHA-256 を記録します。ユーザー名、ホスト名、マウント位置などの個人環境に依存する絶対パスは、入力、結果、manifest、README のいずれにも記録しません。
+- Python source, environment specification, tests, and reproduction guidance.
+- The experimental source workbook,
+  `data/Details_of_experimental_results.xlsx`.
+- Portable immutable inputs under `data/current_model/inputs/`, limited to
+  NPZ, CSV, JSON, and Markdown files. Pickle is not an accepted runtime format.
+- Compact accepted-model results under `data/current_model/results/`, including
+  predictions, coefficients, validation metrics, diketone evaluation, and
+  publication tables.
+- Compact provenance records under `data/current_model/audits/` and reviewed
+  comparator summaries under `data/current_model/comparators/`.
+- Spatial-analysis tables and compressed matrices under
+  `data/current_model/spatial_analysis/`.
+- Final accepted-model PNGs under `data/validation/current_model/`.
+- Minimal Gaussian input examples and human/machine-readable metadata under
+  `examples/gaussian/`.
+- Superseded source code under `libs/legacy/` when it materially documents the
+  analysis history. Legacy outputs are not versioned.
+- The compact withdrawn x/y input and result snapshot under
+  `data/archive/xy_diketones/`, with a checksum manifest and an explicit
+  statement that it is excluded from the accepted runtime.
 
-## Git に含めず再生成するもの
+The frozen-input manifest records relative paths, byte sizes, and SHA-256
+hashes. Versioned inputs, results, manifests, and documentation must not
+contain user names, host names, mount points, or other machine-specific paths.
 
-- `data/current_model/work/` 以下の一時出力。
-- pickle bundle、conformer cache、Gaussian cube、寄与 cube、cubeごとに生成される viewer launcher、実行ログ。再利用可能な共通 viewer helper source は Git に含めます。
-- `data/validation/external_diketones/` の一時 cache と、凍結入力に重複するコピー。
-- `data/eda/`、`data/test/`、旧 validation の探索図・中間表。
-- 仮想環境、Python cache、テスト cache、Office 一時ファイル。
+## Regenerated and excluded from Git
 
-再現実行は Git にある凍結入力だけを読み、accepted model の小容量結果と確定図を再生成できる形にします。再生成物を更新する場合は、コードと入力の差分、乱数 seed、ソフトウェア版、出力照合結果も同じ変更で更新します。
+The following artifacts are reproducible working products and remain ignored:
 
-## 外部 SSD のみに保管するもの
+- temporary files under `data/current_model/work/`;
+- legacy pickle bundles and exploratory tabular exports;
+- conformer caches, Gaussian logs, checkpoints, formatted checkpoints, cube
+  files, scratch directories, and run logs;
+- model-contribution cubes and their per-cube launchers;
+- unreviewed external-series caches under
+  `data/validation/external_diketones/`;
+- exploratory output under `data/legacy/`;
+- Python environments and caches, test caches, editor metadata, and Office
+  temporary files;
+- internal Word-editing automation under `scripts/publication/`.
 
-- `examples/gaussian/` を除く Gaussian の全入力・出力・scratch と、元の分子計算ディレクトリ。
-- superseded な大容量 tabular export、pickle、過去モデル、探索 run。
-- manuscript、Supporting Information、editable figure source、内部 report、memo。
-- 第三者論文 PDF。Git には DOI、正式な引用情報、必要に応じて BibTeX のみを置きます。
+A canonical reproduction must use only versioned inputs. When accepted outputs
+are updated, the code, input differences, random seeds, software versions, and
+numerical verification must be updated in the same reviewed change.
 
-SSD archive には、元の相対位置、用途、ファイル数、総 byte 数、SHA-256、archive 日時を記した manifest を添付します。ローカル側を整理する前に、ファイル数・byte 数と checksum を照合してください。重要な生データと原稿については、SSD 一台だけを唯一のバックアップにしないでください。
+## Maintained outside the repository
 
-## データの昇格手順
+The following materials require controlled external storage:
 
-1. Gaussian 計算と探索 run はリポジトリ外で実行する。
-2. 論文で採用する入力だけを portable な NPZ、CSV、JSON に変換し、個人絶対パスを除去する。
-3. manifest のサイズと SHA-256 を更新し、凍結入力から accepted result を再計算する。
-4. 数値照合と図の生成を確認してから、小容量結果と確定 PNG のみを stage する。
-5. SSD archive の検証後、superseded な tracked file は Git index から外す。`.gitignore` の追加だけでは、すでに tracked のファイルは untrack されません。
+- production Gaussian inputs, outputs, and scratch data other than the minimal
+  examples in `examples/gaussian/`;
+- superseded large tables, pickle files, historical models, and exploratory
+  runs;
+- editable manuscript, Supporting Information, response-to-reviewers, and
+  figure-source files;
+- internal reports and notes;
+- third-party article PDFs, for which the repository should retain only formal
+  citations, DOIs, or BibTeX as appropriate.
 
-## Git 履歴に関する注意
+External archives should include a manifest containing the original relative
+path, purpose, file count, total bytes, SHA-256, and archive date. File counts,
+sizes, and checksums must be verified before local material is reorganized.
+Important raw data and manuscript files must not rely on a single external
+drive as their only backup.
 
-過去の main 履歴には、commit 済みの Gaussian cube/checkpoint、旧 notebook、仮想環境ファイルなどが残っています。作業ツリーから削除したり `.gitignore` に追加したりしても、その既存履歴は小さくなりません。2026-07-21 時点で main だけを bundle 化した圧縮サイズは約166 MiBです。
+## Promoting new data into the accepted package
 
-この作業環境のローカル `.git` object store は約27 GiBですが、ここには作業支援ツールのローカル snapshot ref と一時履歴も含まれます。したがって27 GiBを GitHub上の main やfresh cloneのサイズとして扱わないでください。ローカル tool refを整理対象に含める場合も、実行中セッションでは削除しません。
+1. Run Gaussian calculations and exploratory analyses outside the repository.
+2. Convert only accepted descriptors to portable NPZ, CSV, or JSON files and
+   remove machine-specific paths.
+3. Update the input manifest and model specification, including checksums,
+   provenance, and software versions.
+4. Recompute the accepted results from the frozen package.
+5. Run the independent verifier and regression tests.
+6. Review numerical and visual differences before committing the inputs,
+   compact results, and final PNGs together.
 
-公開前に履歴を軽量化する場合は、検証済みの完全 backup を作成した上で `git filter-repo` または同等手段による履歴 rewrite を別作業として実施します。履歴 rewrite は commit ID を変更し、通常は force-push と既存 clone の再取得を伴うため、共同作業者の合意なしには行いません。
+An ignore rule does not remove an already tracked file from Git. A tracked
+artifact should be removed from the index only after its external archive has
+been independently verified.
+
+## Git-history scope
+
+Earlier `main` history contains Gaussian cubes/checkpoints, historical
+notebooks, and environment files that are no longer present in the current
+tree. Removing files from the working tree or adding ignore rules does not
+reduce existing history. As measured on 2026-07-21, a bundle containing only
+the `main` branch compressed to approximately 166 MiB.
+
+The local object database may also contain tool snapshots and temporary refs,
+so its size is not a measure of the public branch or a fresh clone. History
+rewriting with `git filter-repo` or an equivalent tool is a separate operation
+that changes commit identifiers and normally requires a force push and fresh
+clones. It must be undertaken only from a verified backup and with agreement
+from all collaborators.

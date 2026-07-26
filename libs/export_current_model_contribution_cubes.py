@@ -40,7 +40,7 @@ A24_OUTPUT = (
     / "contribution_cubes_relative_to_A24"
 )
 GRID_SPACING_BOHR = 2.0
-GAUSSVIEW_LAUNCHER = ROOT / "libs" / "open_gaussview_surface.sh"
+GAUSSVIEW_LAUNCHER = ROOT / "scripts" / "viewers" / "open_gaussview_surface.sh"
 GAUSSVIEW_ISOVALUE = 0.020
 
 
@@ -408,7 +408,9 @@ def main() -> None:
         for block in current_model.BLOCKS
     }
     x_full, feature_names, _ = current_model.build_features(raw, coords, train)
-    alpha_path = pd.read_csv(current_model.DATA_DIR / "fulltrain_inner_alpha_path.csv")
+    alpha_path = pd.read_csv(
+        current_model.MODEL_RESULTS_DIR / "fulltrain_inner_alpha_path.csv"
+    )
     alpha = float(alpha_path.loc[alpha_path["current_style_loocv_rmse"].idxmin(), "alpha"])
     y = meta[current_model.TARGET].astype(float).to_numpy()
     model = Lasso(alpha=alpha, fit_intercept=True, max_iter=200000, tol=1.0e-6).fit(

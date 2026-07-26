@@ -67,7 +67,9 @@ def load_model_data(*, refresh_excel: bool = True):
         for block in current_model.BLOCKS
     }
     y = meta[current_model.TARGET].astype(float).to_numpy()
-    outer = pd.read_csv(current_model.DATA_DIR / "outer_predictions.csv").sort_values("fold_id")
+    outer = pd.read_csv(
+        current_model.MODEL_RESULTS_DIR / "outer_predictions.csv"
+    ).sort_values("fold_id")
     if len(outer) != len(train):
         raise ValueError("Current nested outer predictions do not match the training manifest.")
     return payload, meta, raw, coords, train, y, outer
@@ -739,7 +741,10 @@ def main() -> None:
         refresh_excel=not args.no_excel_refresh
     )
     x_full, feature_names, _ = current_model.build_features(raw, coords, train)
-    full_alpha = float(pd.read_csv(current_model.DATA_DIR / "summary.csv").iloc[0]["fulltrain_selected_alpha"])
+    full_alpha = float(
+        pd.read_csv(current_model.MODEL_RESULTS_DIR / "summary.csv")
+        .iloc[0]["fulltrain_selected_alpha"]
+    )
     full_model = Lasso(
         alpha=full_alpha, fit_intercept=True, max_iter=200000, tol=1.0e-6
     ).fit(x_full[train], y[train])

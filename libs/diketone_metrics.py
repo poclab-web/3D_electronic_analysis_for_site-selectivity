@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -17,14 +19,17 @@ TEMPERATURE_BY_GROUP = {
     "d": 298.15,
     "e": 298.15,
     "f": 298.15,
-    "x": 273.0,
-    "y": 273.0,
 }
 
-EXTERNAL_PEAK_TOTAL_TARGETS = {
-    "x": 80.0,
-    "y": 80.0,
+INITIAL_IDENTITY_TARGETS = {
+    "a": "2",
+    "b": "1",
+    "c": "2",
+    "d": "1",
+    "e": "2",
+    "f": "1",
 }
+FINAL_IDENTITY_TARGETS = {"a": "2-4", "e": "2-3"}
 
 
 MAX_TARGETS = {
@@ -202,6 +207,56 @@ def simulate_full(pred_by_entry: dict[str, float], group: str) -> dict[str, obje
     return {"intermediate_abs": intermediate_abs, "final_frac": final_frac}
 
 
+def save_selectivity_identity_summary(
+    frame: pd.DataFrame,
+    save_path: str | Path,
+) -> pd.DataFrame:
+    """Save the eight reported diketone identity checks.
+
+    Six checks compare the major monoalcohol at its maximum concentration;
+    two checks compare the major endpoint diol. This function preserves the
+    identity-only summary used by the accepted-model runner, while
+    :func:`evaluate_predictions` provides the semiquantitative evaluation.
+    """
+    pred_by_entry = {
+        str(entry): float(value)
+        for entry, value in zip(frame["entry"].astype(str), frame["prediction"])
+        if str(entry)[:1] in set("abcdef") and pd.notna(value)
+    }
+    rows: list[dict[str, object]] = []
+    for group, expected in INITIAL_IDENTITY_TARGETS.items():
+        values = simulate_full(pred_by_entry, group)["intermediate_abs"]
+        predicted = max(values, key=values.get)
+        rows.append(
+            {
+                "group": group,
+                "stage": "initial",
+                "expected": expected,
+                "predicted": predicted,
+                "ok": predicted == expected,
+                "target_percent": values[expected],
+            }
+        )
+    for group, expected in FINAL_IDENTITY_TARGETS.items():
+        values = simulate_full(pred_by_entry, group)["final_frac"]
+        predicted = max(values, key=values.get)
+        rows.append(
+            {
+                "group": group,
+                "stage": "final",
+                "expected": expected,
+                "predicted": predicted,
+                "ok": predicted == expected,
+                "target_percent": values[expected],
+            }
+        )
+    summary = pd.DataFrame(rows)
+    output_path = Path(save_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(output_path, index=False)
+    return summary
+
+
 def max_metrics(sim: dict[str, object], group: str) -> list[dict[str, object]]:
     """Compare peak monoalcohol family and diastereomer ratios with experiment."""
     target = MAX_TARGETS[group]
@@ -299,24 +354,6 @@ def evaluate_predictions(
         rows.extend(max_metrics(sim, group))
         if group in FINAL_TARGETS:
             rows.extend(final_metrics(sim, group))
-    for group, observed_percent in EXTERNAL_PEAK_TOTAL_TARGETS.items():
-        expected_entries = {f"{group}{suffix}" for suffix in ENTRY_ORDER}
-        if not expected_entries.issubset(pred_by_entry):
-            continue
-        sim = simulate_full(pred_by_entry, group)
-        predicted_percent = float(sum(sim["intermediate_abs"].values()))
-        rows.append(
-            {
-                "target": f"{group}:max_total",
-                "kind": "max_total_percent",
-                "expected_label": "",
-                "predicted_label": "",
-                "top_match": np.nan,
-                "predicted_percent": predicted_percent,
-                "observed_percent": observed_percent,
-                "abs_error_percent": abs(predicted_percent - observed_percent),
-            }
-        )
     detail = [{"condition": label, **row} for row in rows]
     quantified = [row for row in rows if not pd.isna(row["observed_percent"])]
     top_checks = [row for row in rows if pd.notna(row["top_match"])]

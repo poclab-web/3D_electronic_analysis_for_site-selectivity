@@ -36,6 +36,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "current_model"
 INPUT_DIR = DATA_DIR / "inputs"
 VALIDATION_DIR = ROOT / "data" / "validation" / "current_model"
+RESULTS_DIR = DATA_DIR / "results"
+MODEL_RESULTS_DIR = RESULTS_DIR / "model"
+DIKETONE_RESULTS_DIR = RESULTS_DIR / "diketones"
+PUBLICATION_TABLES_DIR = RESULTS_DIR / "publication_tables"
+AUDIT_DIR = DATA_DIR / "audits"
+MODEL_FIGURE_DIR = VALIDATION_DIR / "model"
+DIKETONE_FIGURE_DIR = VALIDATION_DIR / "diketones"
+CONTRIBUTION_FIGURE_DIR = VALIDATION_DIR / "contribution_series"
+COMPARATOR_FIGURE_DIR = VALIDATION_DIR / "comparators"
 MODEL_ARRAYS_PATH = INPUT_DIR / "model_arrays.npz"
 MODEL_METADATA_PATH = INPUT_DIR / "model_metadata.csv"
 MODEL_PROVENANCE_PATH = INPUT_DIR / "model_provenance.json"
@@ -45,7 +54,6 @@ TRAIN_ROWS_PATH = INPUT_DIR / "train_rows.csv"
 ACTIVE_EXCEL = ROOT / "data" / "Details_of_experimental_results.xlsx"
 ORBITAL_CACHE_PATH = INPUT_DIR / "projected_orbital_fullgrid_2bohr.npz"
 ORBITAL_MANIFEST_PATH = INPUT_DIR / "projected_orbital_manifest.csv"
-EXTERNAL_DIKETONE_INPUT_DIR = INPUT_DIR / "external_diketones"
 ORBITAL_FREE_SUMMARY_PATH = DATA_DIR / "comparators" / "orbital_free_summary.csv"
 TARGET = "ΔΔG.expt."
 BLOCKS = ("electronic", "electrostatic", "orbital")
@@ -59,10 +67,6 @@ LASSO_FIT_TOL = 1.0e-6
 LASSO_PATH_MAX_ITER = 200000
 LASSO_PATH_TOL = 1.0e-4
 DESCRIPTOR_VERSION = "projected_co_pi_star_fullgrid_scaled_es_zero_pad_v1"
-EXTERNAL_DIKETONE_SERIES = ("x", "y")
-EXTERNAL_METADATA_COLUMNS = (
-    "entry", "name", "SMILES", "InChIKey", "temperature", "test"
-)
 DIKETONE_ENTRY_SUFFIXES = (
     "1", "2", "3", "4", "13", "14", "23", "24", "31", "32", "41", "42"
 )
@@ -224,7 +228,9 @@ def refresh_inputs_from_excel(
     when they are not members of the frozen training set.  All changes occur
     in memory; immutable files below :data:`INPUT_DIR` are never rewritten.
     """
-    from dataset import common  # noqa: PLC0415
+    from current_model_support.workbook import (  # noqa: PLC0415
+        load_experimental_dataset,
+    )
 
     old_meta = payload["meta"].copy().reset_index(drop=True)
     old_train_rows = train_rows["row_index"].to_numpy(dtype=int)
@@ -234,7 +240,10 @@ def refresh_inputs_from_excel(
 
     # The active workbook is the authority for current entry labels. Historical
     # holdout aliases such as H1 and Dxx must not leak into manuscript figures.
-    source = common(str(ACTIVE_EXCEL), apply_overrides=False).copy().reset_index(drop=True)
+    source = load_experimental_dataset(
+        ACTIVE_EXCEL,
+        apply_overrides=False,
+    ).copy().reset_index(drop=True)
     source["InChIKey"] = source["InChIKey"].astype(str)
     source_by_key = source.drop_duplicates("InChIKey", keep="first").set_index("InChIKey")
     old_keys = old_meta["InChIKey"].astype(str)
@@ -313,17 +322,17 @@ def refresh_inputs_from_excel(
         "ddg_changed",
     )
     pd.DataFrame(changed_rows, columns=change_columns).to_csv(
-        DATA_DIR / "excel_refresh_changes.csv", index=False
+        AUDIT_DIR / "excel_refresh_changes.csv", index=False
     )
 
     removed = old_meta.loc[~matched, ["entry", "name", "InChIKey"]].copy()
-    removed.to_csv(DATA_DIR / "excel_refresh_removed_rows.csv", index=False)
+    removed.to_csv(AUDIT_DIR / "excel_refresh_removed_rows.csv", index=False)
     source_keys = set(source["InChIKey"].astype(str))
     new_external = source.loc[
         ~source["InChIKey"].astype(str).isin(set(old_keys)),
         ["entry", "name", "InChIKey", "SMILES", "temperature", TARGET, "test"],
     ].copy()
-    new_external.to_csv(DATA_DIR / "excel_refresh_new_external_rows.csv", index=False)
+    new_external.to_csv(AUDIT_DIR / "excel_refresh_new_external_rows.csv", index=False)
     audit = {
         "excel": str(ACTIVE_EXCEL.relative_to(ROOT)),
         "old_bundle_n": int(len(old_meta)),
@@ -337,82 +346,10 @@ def refresh_inputs_from_excel(
         ),
         "feature_blocks": list(BLOCKS),
     }
-    (DATA_DIR / "excel_refresh_audit.json").write_text(
+    (AUDIT_DIR / "excel_refresh_audit.json").write_text(
         json.dumps(audit, indent=2) + "\n", encoding="utf-8"
     )
     return refreshed_payload, refreshed_train, audit
-
-
-def append_external_diketone_series(
-    meta: pd.DataFrame,
-    raw: dict[str, np.ndarray],
-    coords: dict[str, np.ndarray],
-    series_names: tuple[str, ...] = EXTERNAL_DIKETONE_SERIES,
-) -> tuple[pd.DataFrame, dict[str, np.ndarray], np.ndarray]:
-    """Append frozen external diketone descriptors without changing training data."""
-    extended_meta = meta.copy().reset_index(drop=True)
-    extended_raw = {
-        block: np.asarray(raw[block], dtype=float).copy() for block in BLOCKS
-    }
-    appended: list[int] = []
-    existing_entries = set(extended_meta["entry"].astype(str).str.lower())
-
-    for series in series_names:
-        series_dir = EXTERNAL_DIKETONE_INPUT_DIR / f"{series}_series"
-        rows_path = series_dir / "input_rows.csv"
-        cache_path = series_dir / "external_raw_blocks_2bohr.npz"
-        if not rows_path.exists() or not cache_path.exists():
-            raise FileNotFoundError(
-                f"External diketone {series} inputs are incomplete: {series_dir}"
-            )
-
-        rows = pd.read_csv(rows_path).copy()
-        if tuple(rows.columns) != EXTERNAL_METADATA_COLUMNS:
-            raise ValueError(
-                f"{series}: external metadata columns must be "
-                f"{list(EXTERNAL_METADATA_COLUMNS)}, got {rows.columns.tolist()}"
-            )
-        rows["entry"] = rows["entry"].astype(str).str.lower()
-        expected = [f"{series}{suffix}" for suffix in DIKETONE_ENTRY_SUFFIXES]
-        if rows["entry"].tolist() != expected:
-            raise ValueError(
-                f"{series}: expected entry order {expected}, got {rows['entry'].tolist()}"
-            )
-        overlap = existing_entries.intersection(expected)
-        if overlap:
-            raise ValueError(f"{series}: entries already exist in the model bundle: {sorted(overlap)}")
-
-        cache = np.load(cache_path, allow_pickle=False)
-        cache_entries = cache["entries"].astype(str)
-        cache_keys = cache["inchikeys"].astype(str)
-        if not np.array_equal(cache_entries, rows["entry"].to_numpy(dtype=str)):
-            raise ValueError(f"{series}: descriptor and metadata entry orders differ")
-        if not np.array_equal(
-            cache_keys, rows["InChIKey"].astype(str).to_numpy()
-        ):
-            raise ValueError(f"{series}: descriptor and metadata identities differ")
-
-        for block in BLOCKS:
-            external_coords = np.asarray(cache[f"coords_{block}"], dtype=int)
-            if not np.array_equal(external_coords, coords[block]):
-                raise ValueError(f"{series}: {block} coordinate order differs")
-            values = np.asarray(cache[block], dtype=float)
-            if values.shape != (len(rows), EXPECTED_FULL_GRID_N):
-                raise ValueError(
-                    f"{series}: unexpected {block} shape {values.shape}"
-                )
-            if not np.isfinite(values).all():
-                raise ValueError(f"{series}: {block} contains non-finite values")
-            extended_raw[block] = np.vstack((extended_raw[block], values))
-
-        rows[TARGET] = np.nan
-        rows["test"] = 1
-        start = len(extended_meta)
-        extended_meta = pd.concat((extended_meta, rows), ignore_index=True, sort=False)
-        appended.extend(range(start, start + len(rows)))
-        existing_entries.update(expected)
-
-    return extended_meta, extended_raw, np.asarray(appended, dtype=int)
 
 
 def in_bounds(coords: np.ndarray) -> np.ndarray:
@@ -715,35 +652,6 @@ def save_outer_diketone_uncertainty(
             }
         )
     primary = pd.DataFrame(primary_rows)
-    extended_rows = list(primary_rows)
-    for group in EXTERNAL_DIKETONE_SERIES:
-        values = []
-        for model_values in dike_matrix:
-            prediction = dict(zip(dike_entries, np.asarray(model_values, dtype=float)))
-            simulation = semiquant_exp8.simulate_full(prediction, group)
-            values.append(float(sum(simulation["intermediate_abs"].values())))
-        full_simulation = semiquant_exp8.simulate_full(full_prediction, group)
-        full_percent = float(sum(full_simulation["intermediate_abs"].values()))
-        values = np.asarray(values, dtype=float)
-        extended_rows.append(
-            {
-                "group": group,
-                "stage": "peak_total",
-                "expected": "80%",
-                "observed_percent": 80.0,
-                "fulltrain_percent": full_percent,
-                "fulltrain_top_match": np.nan,
-                "outer83_top_match_fraction": np.nan,
-                "outer83_mean_percent": float(np.mean(values)),
-                "outer83_median_percent": float(np.median(values)),
-                "outer83_sd_percent": float(np.std(values, ddof=1)),
-                "outer83_p16_percent": float(np.percentile(values, 16)),
-                "outer83_p84_percent": float(np.percentile(values, 84)),
-                "outer83_min_percent": float(np.min(values)),
-                "outer83_max_percent": float(np.max(values)),
-            }
-        )
-    extended = pd.DataFrame(extended_rows)
     model_metrics = pd.DataFrame(model_rows)
     metric_summary = {
         "outer_model_n": int(len(model_metrics)),
@@ -755,19 +663,22 @@ def save_outer_diketone_uncertainty(
         "semiquant_rmse_min_percent": float(model_metrics["semiquant_rmse_percent"].min()),
         "semiquant_rmse_max_percent": float(model_metrics["semiquant_rmse_percent"].max()),
     }
-    primary.to_csv(DATA_DIR / "diketone_primary8_outer83_68_interval.csv", index=False)
-    extended.to_csv(
-        DATA_DIR / "diketone_primary8_xy_outer83_68_interval.csv", index=False
+    primary.to_csv(
+        DIKETONE_RESULTS_DIR / "diketone_primary8_outer83_68_interval.csv",
+        index=False,
     )
-    model_metrics.to_csv(DATA_DIR / "diketone_outer83_model_metrics.csv", index=False)
+    model_metrics.to_csv(
+        DIKETONE_RESULTS_DIR / "diketone_outer83_model_metrics.csv", index=False
+    )
     pd.DataFrame([metric_summary]).to_csv(
-        DATA_DIR / "diketone_outer83_uncertainty_summary.csv", index=False
+        DIKETONE_RESULTS_DIR / "diketone_outer83_uncertainty_summary.csv",
+        index=False,
     )
 
-    labels = [f"{row.group} {row.stage}" for row in extended.itertuples(index=False)]
-    medians = extended["outer83_median_percent"].to_numpy(dtype=float)
-    lower = medians - extended["outer83_p16_percent"].to_numpy(dtype=float)
-    upper = extended["outer83_p84_percent"].to_numpy(dtype=float) - medians
+    labels = [f"{row.group} {row.stage}" for row in primary.itertuples(index=False)]
+    medians = primary["outer83_median_percent"].to_numpy(dtype=float)
+    lower = medians - primary["outer83_p16_percent"].to_numpy(dtype=float)
+    upper = primary["outer83_p84_percent"].to_numpy(dtype=float) - medians
     positions = np.arange(len(labels))
     fig, ax = plt.subplots(figsize=(8.4, 4.5))
     ax.errorbar(
@@ -782,13 +693,13 @@ def save_outer_diketone_uncertainty(
     )
     ax.scatter(
         positions,
-        extended["fulltrain_percent"],
+        primary["fulltrain_percent"],
         marker="D",
         color="#b44b3f",
         s=30,
         label="Full-train model",
     )
-    observed = extended["observed_percent"].to_numpy(dtype=float)
+    observed = primary["observed_percent"].to_numpy(dtype=float)
     has_observed = np.isfinite(observed)
     ax.scatter(
         positions[has_observed], observed[has_observed], marker="x", color="#222222", s=42,
@@ -803,7 +714,8 @@ def save_outer_diketone_uncertainty(
     ax.legend(frameon=False, fontsize=8, loc="lower left")
     fig.tight_layout()
     fig.savefig(
-        VALIDATION_DIR / "diketone_primary8_xy_outer83_68_interval.png", dpi=350
+        DIKETONE_FIGURE_DIR / "diketone_primary8_outer83_68_interval.png",
+        dpi=350,
     )
     plt.close(fig)
     return metric_summary
@@ -821,10 +733,7 @@ def save_model_comparison(current_summary: dict[str, object]) -> None:
             "diketone_top_checks": int(current_summary["diketone_top_checks"]),
             "diketone_check_n": int(current_summary["diketone_check_n"]),
             "diketone_semiquant_rmse_percent": float(
-                current_summary.get(
-                    "diketone_af_semiquant_rmse_percent",
-                    current_summary["diketone_semiquant_rmse_percent"],
-                )
+                current_summary["diketone_semiquant_rmse_percent"]
             ),
             "diketone_evaluation_series": "a-f (matched comparator scope)",
         }
@@ -846,7 +755,9 @@ def save_model_comparison(current_summary: dict[str, object]) -> None:
             }
         )
     comparison = pd.DataFrame(rows)
-    comparison.to_csv(DATA_DIR / "model_comparison_current_vs_orbital_free.csv", index=False)
+    comparison.to_csv(
+        RESULTS_DIR / "model_comparison_current_vs_orbital_free.csv", index=False
+    )
     if len(comparison) != 2:
         return
     colors = ["#3d6f8e", "#8f8f8f"]
@@ -865,7 +776,7 @@ def save_model_comparison(current_summary: dict[str, object]) -> None:
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(axis="y", color="#dddddd", linewidth=0.6)
     fig.tight_layout()
-    fig.savefig(VALIDATION_DIR / "current_vs_orbital_free.png", dpi=350)
+    fig.savefig(COMPARATOR_FIGURE_DIR / "current_vs_orbital_free.png", dpi=350)
     plt.close(fig)
 
 
@@ -905,8 +816,19 @@ def main() -> None:
     if args.verify_inputs_only:
         print(f"Verified {len(verify_input_manifest())} frozen input files.")
         return
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
+    for directory in (
+        DATA_DIR,
+        VALIDATION_DIR,
+        MODEL_RESULTS_DIR,
+        DIKETONE_RESULTS_DIR,
+        PUBLICATION_TABLES_DIR,
+        AUDIT_DIR,
+        MODEL_FIGURE_DIR,
+        DIKETONE_FIGURE_DIR,
+        CONTRIBUTION_FIGURE_DIR,
+        COMPARATOR_FIGURE_DIR,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
     train_manifest = pd.read_csv(TRAIN_ROWS_PATH)
     train = train_manifest["row_index"].to_numpy(dtype=int)
     refresh_audit = None
@@ -919,18 +841,14 @@ def main() -> None:
     meta = payload["meta"].copy()
     raw = {block: np.asarray(payload["raw_blocks"][block], dtype=float) for block in BLOCKS}
     coords = {block: np.asarray(payload["coords"][block], dtype=int) for block in BLOCKS}
-    meta, raw, appended_diketone = append_external_diketone_series(
-        meta, raw, coords
-    )
     y = pd.to_numeric(meta[TARGET], errors="coerce").to_numpy(dtype=float)
-    diketone_pattern = rf"[a-fxy](?:{'|'.join(DIKETONE_ENTRY_SUFFIXES)})"
+    diketone_pattern = rf"[a-f](?:{'|'.join(DIKETONE_ENTRY_SUFFIXES)})"
     diketone = np.flatnonzero(
         meta["entry"].astype(str).str.fullmatch(diketone_pattern).to_numpy()
     )
-    if len(appended_diketone) != 24 or len(diketone) != 96:
+    if len(diketone) != 72:
         raise ValueError(
-            "Expected 72 a-f and 24 x/y diketone pathways, got "
-            f"{len(diketone)} total and {len(appended_diketone)} appended."
+            f"Expected 72 a-f diketone pathways, got {len(diketone)}."
         )
     if len(train) != 83:
         raise ValueError(f"Expected the frozen 83-point training manifest, got {len(train)} rows.")
@@ -968,10 +886,10 @@ def main() -> None:
                 r2_score(y[train], candidate) for candidate in full_inner_predictions
             ],
         }
-    ).to_csv(DATA_DIR / "fulltrain_inner_alpha_path.csv", index=False)
+    ).to_csv(MODEL_RESULTS_DIR / "fulltrain_inner_alpha_path.csv", index=False)
 
-    outer_path = DATA_DIR / "outer_predictions.csv"
-    dike_matrix_path = DATA_DIR / "diketone_predictions_by_outer_model.csv"
+    outer_path = MODEL_RESULTS_DIR / "outer_predictions.csv"
+    dike_matrix_path = DIKETONE_RESULTS_DIR / "diketone_predictions_by_outer_model.csv"
     if args.skip_nested and not (outer_path.exists() and dike_matrix_path.exists()):
         raise FileNotFoundError("--skip-nested requires current outer prediction files.")
     if args.skip_nested:
@@ -987,7 +905,7 @@ def main() -> None:
         if dike_frame.columns.tolist() != expected_columns:
             raise ValueError(
                 "Stored outer-model diketone predictions do not match the current "
-                "a-f/x/y evaluation scope; rerun without --skip-nested."
+                "a-f evaluation scope; rerun without --skip-nested."
             )
         dike_matrix = dike_frame.to_numpy(dtype=float)
     else:
@@ -1005,7 +923,7 @@ def main() -> None:
 
     pd.DataFrame({"feature": names, "coefficient": model.coef_}).loc[
         lambda frame: frame["coefficient"].ne(0)
-    ].to_csv(DATA_DIR / "nonzero_coefficients.csv", index=False)
+    ].to_csv(MODEL_RESULTS_DIR / "nonzero_coefficients.csv", index=False)
 
     contribution = pd.DataFrame({"entry": meta["entry"].astype(str), "name": meta["name"].astype(str), "InChIKey": meta["InChIKey"].astype(str), TARGET: y, "test": meta["test"].to_numpy(), "fulltrain_prediction": prediction})
     for block in BLOCKS:
@@ -1013,7 +931,9 @@ def main() -> None:
         contribution[f"{block}_contribution"] = x_full[:, mask] @ model.coef_[mask]
     contribution["intercept"] = float(model.intercept_)
     contribution["role"] = np.where(np.isin(np.arange(len(meta)), train), "training", np.where(np.isin(np.arange(len(meta)), diketone), "diketone_test", "excluded_monoketone"))
-    contribution.to_csv(DATA_DIR / "fulltrain_predictions_and_contributions.csv", index=False)
+    contribution.to_csv(
+        MODEL_RESULTS_DIR / "fulltrain_predictions_and_contributions.csv", index=False
+    )
 
     if not args.skip_contribution_cubes:
         # These display cubes are regenerated from the frozen atom-geometry
@@ -1061,18 +981,23 @@ def main() -> None:
 
     dike = contribution.iloc[diketone].copy()
     dike = dike.rename(columns={"fulltrain_prediction": "prediction"})
-    dike.to_csv(DATA_DIR / "fulltrain_diketone_predictions_and_contributions.csv", index=False)
+    dike.to_csv(
+        DIKETONE_RESULTS_DIR / "fulltrain_diketone_predictions_and_contributions.csv",
+        index=False,
+    )
     external = contribution.loc[(contribution["role"] == "excluded_monoketone") & contribution[TARGET].notna()].copy()
     external = external.rename(columns={"fulltrain_prediction": "prediction"})
     external["error"] = external["prediction"] - external[TARGET]
-    external.to_csv(DATA_DIR / "excluded_monoketone_predictions.csv", index=False)
+    external.to_csv(
+        MODEL_RESULTS_DIR / "excluded_monoketone_predictions.csv", index=False
+    )
 
     regression = contribution.loc[contribution["role"].eq("training")].copy()
     plot_yy(
         outer,
         regression,
         external,
-        VALIDATION_DIR / "yy_nested_outer_and_excluded.png",
+        MODEL_FIGURE_DIR / "yy_nested_outer_and_excluded.png",
     )
     # Regenerate the report-ready contribution distribution in the normal
     # current-model run, rather than requiring a separate spatial-analysis run.
@@ -1089,36 +1014,30 @@ def main() -> None:
         train,
         spatial_figure_dir / "centered_block_contribution_violins.png",
     )
-    from graph import (  # noqa: PLC0415
-        plot_component_contribution_series,
+    from current_model_support.diketone_plots import (  # noqa: PLC0415
         reaction_concentration_plot_complex,
-        save_diketone_selectivity_summary,
     )
-
-    selectivity = save_diketone_selectivity_summary(dike, DATA_DIR / "diketone_selectivity_summary.csv")
+    from current_model_support.model_figures import (  # noqa: PLC0415
+        plot_component_contribution_series,
+    )
     import diketone_metrics as semiquant_exp8  # noqa: PLC0415
+
+    selectivity = semiquant_exp8.save_selectivity_identity_summary(
+        dike,
+        DIKETONE_RESULTS_DIR / "diketone_selectivity_summary.csv",
+    )
 
     semiquant_summary, semiquant_detail = semiquant_exp8.evaluate_predictions(
         "current_projected_orbital_model",
         dict(zip(dike["entry"].astype(str), dike["prediction"].astype(float))),
     )
     semiquant_detail = pd.DataFrame(semiquant_detail)
-    semiquant_detail.to_csv(DATA_DIR / "diketone_semiquant_detail.csv", index=False)
+    semiquant_detail.to_csv(
+        DIKETONE_RESULTS_DIR / "diketone_semiquant_detail.csv", index=False
+    )
     quantified = semiquant_detail.dropna(subset=["observed_percent"])
     semiquant_rmse = float(
         np.sqrt(np.mean(quantified["abs_error_percent"].to_numpy(dtype=float) ** 2))
-    )
-    af_quantified = quantified[
-        quantified["target"].astype(str).str.match(r"^[a-f]:")
-    ]
-    xy_quantified = quantified[
-        quantified["target"].astype(str).str.match(r"^[xy]:")
-    ]
-    af_rmse = float(
-        np.sqrt(np.mean(af_quantified["abs_error_percent"].to_numpy(dtype=float) ** 2))
-    )
-    xy_rmse = float(
-        np.sqrt(np.mean(xy_quantified["abs_error_percent"].to_numpy(dtype=float) ** 2))
     )
     uncertainty = save_outer_diketone_uncertainty(
         dike_matrix,
@@ -1134,12 +1053,15 @@ def main() -> None:
         "d": 298.15,
         "e": 298.15,
         "f": 298.15,
-        "x": 273.0,
-        "y": 273.0,
     }.items():
         ordered = [f"{group}{suffix}" for suffix in ("1", "2", "3", "4", "13", "14", "23", "24", "31", "32", "41", "42")]
         values = dike.set_index("entry").loc[ordered, "prediction"].to_numpy(dtype=float)
-        reaction_concentration_plot_complex(values, T=temperature, a0=1, save_path=VALIDATION_DIR / f"diketone_{group}_progress.png")
+        reaction_concentration_plot_complex(
+            values,
+            T=temperature,
+            a0=1,
+            save_path=DIKETONE_FIGURE_DIR / f"diketone_{group}_progress.png",
+        )
 
     def numbered_entries(prefix: str, lower: int, upper: int) -> list[str]:
         """Return numerically sorted current entry labels within a series."""
@@ -1156,18 +1078,25 @@ def main() -> None:
         "electrostatic",
         a_entries,
         "A1",
-        VALIDATION_DIR / "A1_A13_electrostatic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "A1_A13_electrostatic_vs_experiment.png",
         "A1--A13 series",
     )
     e_entries = numbered_entries("E", 1, 99)
-    plot_component_contribution_series(contribution, "electronic", list(e_entries), "E4", VALIDATION_DIR / "E_series_electronic_vs_experiment.png", "E series")
+    plot_component_contribution_series(
+        contribution,
+        "electronic",
+        list(e_entries),
+        "E4",
+        CONTRIBUTION_FIGURE_DIR / "E_series_electronic_vs_experiment.png",
+        "E series",
+    )
     a_all = numbered_entries("A", 1, 99)
     plot_component_contribution_series(
         contribution,
         "electrostatic",
         [*a_entries, "A24"],
         "A24",
-        VALIDATION_DIR / "A_series_electrostatic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "A_series_electrostatic_vs_experiment.png",
         "A series relative to A24",
         xlabel="electrostatic descriptor contribution [kcal/mol]",
         ylabel=r"$\Delta\Delta G^\ddagger_{\mathrm{expt.}}$ [kcal/mol]",
@@ -1187,12 +1116,12 @@ def main() -> None:
     a_late_reference = a_late[0]
     plot_component_contribution_series(
         contribution, "electronic", a_late, a_late_reference,
-        VALIDATION_DIR / "A_late_series_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "A_late_series_electronic_vs_experiment.png",
         f"{a_late[0]}--{a_late[-1]} series",
     )
     plot_component_contribution_series(
         contribution, "electronic", c_entries, "A24",
-        VALIDATION_DIR / "C_series_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "C_series_electronic_vs_experiment.png",
         "C series relative to A24",
         xlabel="electronic descriptor contribution [kcal/mol]",
         ylabel=r"$\Delta\Delta G^\ddagger_{\mathrm{expt.}}$ [kcal/mol]",
@@ -1209,7 +1138,9 @@ def main() -> None:
         x_tick_step=1.0,
         label_fontweight="bold",
     )
-    combined_series_path = VALIDATION_DIR / "A_C_series_contribution_comparison.png"
+    combined_series_path = (
+        CONTRIBUTION_FIGURE_DIR / "A_C_series_contribution_comparison.png"
+    )
     combined_fig, combined_axes = plt.subplots(1, 2, figsize=(8.8, 4.4))
     plot_component_contribution_series(
         contribution,
@@ -1270,27 +1201,30 @@ def main() -> None:
     }
     c_augmented = plot_component_contribution_series(
         contribution, "electronic", c_entries, "C1",
-        VALIDATION_DIR / "C_series_highlighted_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "C_series_highlighted_electronic_vs_experiment.png",
         f"{c_entries[0]}--{c_entries[-1]} with highlighted aliphatic ketones",
         highlighted_names=c_added_names,
         highlighted_labels=c_added_labels,
         series_label="C series",
         highlight_label="Added aliphatic ketones",
     )
-    c_augmented.to_csv(DATA_DIR / "C_series_highlighted_electronic_values.csv", index=False)
+    c_augmented.to_csv(
+        PUBLICATION_TABLES_DIR / "C_series_highlighted_electronic_values.csv",
+        index=False,
+    )
     plot_component_contribution_series(
         contribution, "electronic", list(d_entries), "D4",
-        VALIDATION_DIR / "D_series_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "D_series_electronic_vs_experiment.png",
         f"{d_entries[0]}--{d_entries[-1]} series",
     )
     for legacy_path in (
-        VALIDATION_DIR / "A1_A13_H1_electrostatic_vs_experiment.png",
-        VALIDATION_DIR / "A13_A24_electronic_vs_experiment.png",
-        VALIDATION_DIR / "C1_C11_electronic_vs_experiment.png",
-        VALIDATION_DIR / "C1_C11_plus_added_electronic_vs_experiment.png",
-        VALIDATION_DIR / "D1_D15_electronic_vs_experiment.png",
-        VALIDATION_DIR / "A_series_electronic_vs_experiment.png",
-        DATA_DIR / "C1_C11_plus_added_electronic_values.csv",
+        CONTRIBUTION_FIGURE_DIR / "A1_A13_H1_electrostatic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "A13_A24_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "C1_C11_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "C1_C11_plus_added_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "D1_D15_electronic_vs_experiment.png",
+        CONTRIBUTION_FIGURE_DIR / "A_series_electronic_vs_experiment.png",
+        PUBLICATION_TABLES_DIR / "C1_C11_plus_added_electronic_values.csv",
     ):
         legacy_path.unlink(missing_ok=True)
 
@@ -1319,16 +1253,14 @@ def main() -> None:
         "diketone_semiquant_metric_n": int(len(quantified)),
         "diketone_semiquant_mae_percent": float(semiquant_summary["semiquant_mae_percent"]),
         "diketone_semiquant_rmse_percent": semiquant_rmse,
-        "diketone_af_semiquant_rmse_percent": af_rmse,
-        "diketone_xy_semiquant_rmse_percent": xy_rmse,
-        "diketone_evaluation_series": "a,b,c,d,e,f,x,y",
+        "diketone_evaluation_series": "a,b,c,d,e,f",
         "outer_models_8_of_8": int(uncertainty["models_8_of_8"]),
         "outer_models_8_of_8_fraction": float(uncertainty["models_8_of_8_fraction"]),
         **{
             f"{block}_fullgrid_scale": float(np.std(raw[block][train])) for block in BLOCKS
         },
     }
-    pd.DataFrame([summary]).to_csv(DATA_DIR / "summary.csv", index=False)
+    pd.DataFrame([summary]).to_csv(MODEL_RESULTS_DIR / "summary.csv", index=False)
     save_model_comparison(summary)
     (DATA_DIR / "model_specification.json").write_text(
         json.dumps(
@@ -1363,8 +1295,7 @@ def main() -> None:
                 "alpha_selection": "minimum inner LOOCV RMSE",
                 "nested_validation": "strict outer LOOCV; held-out row excluded from all scaling and selection",
                 "diketone_used_for_model_selection": False,
-                "external_diketone_series": list(EXTERNAL_DIKETONE_SERIES),
-                "diketone_evaluation_series": list("abcdefxy"),
+                "diketone_evaluation_series": list("abcdef"),
                 "input_arrays": str(MODEL_ARRAYS_PATH.relative_to(ROOT)),
                 "input_metadata": str(MODEL_METADATA_PATH.relative_to(ROOT)),
                 "input_provenance": str(MODEL_PROVENANCE_PATH.relative_to(ROOT)),

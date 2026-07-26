@@ -1,0 +1,588 @@
+"""
+Utility functions for the competitive ketone reduction dataset.
+
+This module provides:
+- Loading & cleaning the original Excel dataset
+- Exporting cleaned tables with RDKit molecule thumbnails
+- Plotting ΔΔG‡ vs k2/k1 by analogue class
+- Hammett and carbonyl-angle correlation plots
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import linregress
+from rdkit import Chem
+from rdkit.Chem import PandasTools
+from pathlib import Path
+
+try:
+    from libs.legacy import eda
+except ImportError:
+    import eda
+
+
+HOLDOUT_ENTRY_BY_NAME = {
+    "Benzoylacetonitrile": "H1",
+    "Bicyclo[2.2.1]hept-5-en-2-one (exo)": "H2(exo)",
+    "Bicyclo[2.2.1]hept-5-en-2-one (endo)": "H2(endo)",
+    "1,4-Cyclohexanedione Monoethyleneketal": "H3",
+    "Isophorone Oxide (cis)": "H4(cis)",
+    "Isophorone Oxide (trans)": "H4(trans)",
+    "2-methylcyclohexanone(trans)": "Dxx(trans)",
+    "2-methylcyclohexanone(cis)": "Dxx(cis)",
+}
+
+
+def apply_dataset_overrides(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply manuscript-model data-set conventions before downstream parsing."""
+    df = df.copy()
+    names = df["name"].astype(str)
+
+    for substrate_name, entry in HOLDOUT_ENTRY_BY_NAME.items():
+        mask = names == substrate_name
+        df.loc[mask, "entry"] = entry
+        df.loc[mask, "test"] = 1
+
+    return df
+
+
+def common(from_file_path: str, *, apply_overrides: bool = True) -> pd.DataFrame:
+    """Load and preprocess the competitive-reaction Excel data.
+
+    Parameters
+    ----------
+    from_file_path : str
+        Path to the input Excel file.
+        The file is expected to contain a 'SMILES' column and a header row
+        in the second line (the first row is skipped).
+    apply_overrides : bool, optional
+        Apply historical holdout aliases such as H1 and Dxx. Set to ``False``
+        when current workbook entry labels must be preserved for figures.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Preprocessed DataFrame, with:
+        - 'mol' : RDKit Mol objects converted from 'SMILES'
+        - rows with invalid 'SMILES' or missing 'mol' removed
+        - 'InChIKey' : InChIKey of the hydrogen-saturated molecule
+    """
+    # Load
+    df = pd.read_excel(from_file_path, skiprows=1)  # .iloc[:150]
+    if apply_overrides:
+        df = apply_dataset_overrides(df)
+    df = df.dropna(subset=["SMILES"]).copy()
+
+    # Generate RDKit Mol objects from SMILES
+    df["mol"] = df["SMILES"].apply(Chem.MolFromSmiles)
+
+    # Drop rows where SMILES or mol could not be created
+    df = df.dropna(subset=["mol", "SMILES"])
+
+    # Generate InChIKey from explicit-hydrogen molecules
+    df["InChIKey"] = df["mol"].apply(
+        lambda mol: Chem.inchi.MolToInchiKey(Chem.AddHs(mol))
+    )
+
+    return df
+
+
+def output(df: pd.DataFrame, to_file_path: str) -> None:
+    """Export a cleaned Excel file with unique molecules and RDKit images.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame. It must contain at least the following columns:
+        'entry', 'SMILES', 'InChIKey', 'temperature', 'ΔΔG.expt.', 'test'.
+    to_file_path : str
+        Output Excel file path.
+
+    Returns
+    -------
+    None
+        The function writes an Excel file to `to_file_path`.
+    """
+    # Ensure unique molecules by InChIKey
+    print(df[df.duplicated(subset="InChIKey")])
+    df = df.drop_duplicates(subset="InChIKey").copy()
+    print(len(df))
+    # Select and sanitize columns for export
+    df = df[
+        ["entry", "name", "SMILES", "InChIKey", "temperature", "ΔΔG.expt.", "test"]
+    ].replace([np.nan, None, np.inf, -np.inf], "N/A")
+
+    # Add RDKit molecule column (ROMol) from SMILES
+    PandasTools.AddMoleculeColumnToFrame(df, "SMILES")
+
+    # Save as Excel with molecule images
+    PandasTools.SaveXlsxFromFrame(df, to_file_path, size=(100, 100))
+
+
+def plot_ddg_vs_k2k1(df: pd.DataFrame, to_file_path: str) -> None:
+    """Plot ΔΔG‡expt. distributions by analogue class and save as PNG.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing at least:
+        - 'analogue' : categorical label for each substrate
+        - 'ΔΔG.expt.' : experimental ΔΔG‡ values [kcal/mol]
+    to_file_path : str
+        Output image file path.
+
+    Returns
+    -------
+    None
+        The function saves the plot to `to_file_path`.
+    """
+    analogue_classes = [
+        "acetophenone",
+        "arylcyclo",
+        "chain",
+        "aliphaticcyclo",
+        "polycyclic",
+    ]
+
+    # RGB colors for each analogue class
+    colors = {
+        "acetophenone": (233 / 255, 113 / 255, 50 / 255),
+        "arylcyclo": (21 / 255, 96 / 255, 130 / 255),
+        "chain": (160 / 255, 43 / 255, 147 / 255),
+        "aliphaticcyclo": (25 / 255, 107 / 255, 36 / 255),
+        "polycyclic": (0 / 255, 0 / 255, 0 / 255),
+    }
+
+    fig, ax_top = plt.subplots(figsize=(6, 3), facecolor="none")
+    fig.patch.set_alpha(0.0)
+    ax_top.set_facecolor("none")
+
+    # y-position assigned per analogue class
+    y_positions = {
+        analogue: len(analogue_classes) - i
+        for i, analogue in enumerate(analogue_classes)
+    }
+
+    used_y = []  # Record y coordinates actually used
+
+    for analogue in analogue_classes:
+        subset = df[df["analogue"] == analogue]
+        if subset.empty:
+            # Skip classes not present in the dataset
+            continue
+
+        y = y_positions[analogue]
+        used_y.append(y)
+
+        x_vals = subset["ΔΔG.expt."]
+
+        # Horizontal line indicating the range of ΔΔG‡ for this class
+        ax_top.hlines(
+            y=y,
+            xmin=x_vals.min(),
+            xmax=x_vals.max(),
+            color="gray",
+            linewidth=2,
+        )
+
+        # Individual points only
+        ax_top.plot(
+            x_vals,
+            [y] * len(x_vals),
+            "o",
+            color=colors[analogue],
+            alpha=0.7,
+            label=analogue,
+        )
+
+    # Add upper padding to the y-axis range
+    if used_y:
+        y_min = min(used_y)
+        y_max = max(used_y)
+        ax_top.set_ylim(y_min - 0.2, y_max + 1)
+
+    # Hide frame and y-axis labels
+    for spine in ax_top.spines.values():
+        spine.set_visible(False)
+    ax_top.set_yticks([])
+
+    # ΔΔG‡expt. axis on the top
+    ax_top.xaxis.set_ticks_position("top")
+    ax_top.xaxis.set_label_position("top")
+    ax_top.set_xlabel(r"$\Delta\Delta G^\ddagger_{\rm expt.}$ [kcal/mol]", loc="right")
+    ax_top.xaxis.labelpad = 10
+
+    # Top arrow (→)
+    ax_top.annotate(
+        "",
+        xy=(1.02, 1.0),
+        xytext=(-0.02, 1.0),
+        xycoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", color="black", linewidth=1.5),
+    )
+
+    # Bottom secondary axis: k2/k1
+    ax_bottom = ax_top.secondary_xaxis("bottom")
+    ax_bottom.set_facecolor("none")
+
+    # ΔΔG → k2/k1 conversion: k2/k1 = exp(-ΔΔG / (0.273 * 1.99))
+    kbT = 0.273 * 1.99
+    k2k1_ticks = np.array([100, 10, 1, 0.1, 0.01])
+    ddg_ticks = -np.log(k2k1_ticks) * kbT
+
+    ax_bottom.set_xticks(ddg_ticks)
+    ax_bottom.set_xticklabels(["100", "10", "1", "0.1", "0.01"])
+    ax_bottom.set_xlabel(r"$k_2/k_1$", loc="left")
+
+    # Bottom arrow (←)
+    ax_top.annotate(
+        "",
+        xy=(-0.02, 0.0),
+        xytext=(1.02, 0.0),
+        xycoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", color="black", linewidth=1.5),
+    )
+
+    ax_top.set_title("")
+    fig.tight_layout()
+
+    # --- create folder if needed ---
+    out_path = Path(to_file_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig.savefig(out_path, dpi=500, transparent=False)
+    plt.close(fig)
+
+
+def plot_ddg_vs_k2k1_errorbar(df: pd.DataFrame, to_file_path: str) -> None:
+    """Plot ΔΔG‡expt. distributions with ±σ.expt. error bars and save as PNG.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing at least:
+        - 'analogue' : categorical label for each substrate
+        - 'ΔΔG.expt.' : experimental ΔΔG‡ values [kcal/mol]
+        - '±σ.3' or other ±σ column representing experimental uncertainty.
+    to_file_path : str
+        Output image file path.
+
+    Returns
+    -------
+    None
+        The function saves the plot to `to_file_path`.
+    """
+    analogue_classes = [
+        "acetophenone",
+        "arylcyclo",
+        "chain",
+        "aliphaticcyclo",
+        "polycyclic",
+    ]
+
+    colors = {
+        "acetophenone": (233 / 255, 113 / 255, 50 / 255),
+        "arylcyclo": (21 / 255, 96 / 255, 130 / 255),
+        "chain": (160 / 255, 43 / 255, 147 / 255),
+        "aliphaticcyclo": (25 / 255, 107 / 255, 36 / 255),
+        "polycyclic": (0 / 255, 0 / 255, 0 / 255),
+    }
+
+    fig, ax_top = plt.subplots(figsize=(6, 3), facecolor="none")
+    fig.patch.set_alpha(0.0)
+    ax_top.set_facecolor("none")
+
+    y_positions = {
+        analogue: len(analogue_classes) - i
+        for i, analogue in enumerate(analogue_classes)
+    }
+
+    sigma_column = "±σ.3"
+    if sigma_column not in df.columns:
+        sigma_candidates = [col for col in df.columns if str(col).strip().startswith("±σ")]
+        sigma_column = sigma_candidates[-1] if sigma_candidates else None
+
+    used_y = []  # Record y coordinates actually used
+
+    for analogue in analogue_classes:
+        subset = df[df["analogue"] == analogue]
+        if subset.empty:
+            continue
+
+        y = y_positions[analogue]
+        used_y.append(y)
+
+        x_vals = subset["ΔΔG.expt."]
+        x_err = None
+        if sigma_column is not None:
+            x_err = subset[sigma_column].fillna(0).values
+
+        ax_top.hlines(
+            y=y,
+            xmin=x_vals.min(),
+            xmax=x_vals.max(),
+            color="gray",
+            linewidth=2,
+        )
+
+        ax_top.errorbar(
+            x_vals,
+            [y] * len(x_vals),
+            xerr=x_err,
+            fmt="none",
+            ecolor=colors[analogue],
+            elinewidth=1.5,
+            capsize=3,
+            alpha=0.9,
+            label=analogue,
+        )
+
+    if used_y:
+        y_min = min(used_y)
+        y_max = max(used_y)
+        ax_top.set_ylim(y_min - 0.2, y_max + 1)
+
+    for spine in ax_top.spines.values():
+        spine.set_visible(False)
+    ax_top.set_yticks([])
+
+    ax_top.xaxis.set_ticks_position("top")
+    ax_top.xaxis.set_label_position("top")
+    ax_top.set_xlabel(r"$\Delta\Delta G^\ddagger_{\rm expt.}$ [kcal/mol]", loc="right")
+    ax_top.xaxis.labelpad = 10
+
+    ax_top.annotate(
+        "",
+        xy=(1.02, 1.0),
+        xytext=(-0.02, 1.0),
+        xycoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", color="black", linewidth=1.5),
+    )
+
+    ax_bottom = ax_top.secondary_xaxis("bottom")
+    ax_bottom.set_facecolor("none")
+
+    kbT = 0.273 * 1.99
+    k2k1_ticks = np.array([100, 10, 1, 0.1, 0.01])
+    ddg_ticks = -np.log(k2k1_ticks) * kbT
+
+    ax_bottom.set_xticks(ddg_ticks)
+    ax_bottom.set_xticklabels(["100", "10", "1", "0.1", "0.01"])
+    ax_bottom.set_xlabel(r"$k_2/k_1$", loc="left")
+
+    ax_top.annotate(
+        "",
+        xy=(-0.02, 0.0),
+        xytext=(1.02, 0.0),
+        xycoords="axes fraction",
+        arrowprops=dict(arrowstyle="->", color="black", linewidth=1.5),
+    )
+
+    ax_top.set_title("")
+    fig.tight_layout()
+
+    out_path = Path(to_file_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig.savefig(out_path, dpi=500, transparent=False)
+    plt.close(fig)
+
+
+def Hammettplot(x, y, save_path: str) -> None:
+    """Create a Hammett ρ-plot of ΔΔG‡expt. vs Hammett σ and save it.
+
+    Parameters
+    ----------
+    x : array-like
+        Hammett σ values.
+    y : array-like
+        Experimental ΔΔG‡ values [kcal/mol] corresponding to `x`.
+    save_path : str
+        Output image file path.
+
+    Returns
+    -------
+    None
+        The function saves the plot to `save_path`.
+    """
+    # Ensure the output folder exists (e.g., "folder/file.png")
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Linear regression
+    slope, intercept, r_value, p_value, std_err = linregress(x, y)
+
+    # Regression line
+    x_fit = np.linspace(np.nanmin(x), np.nanmax(x), 100)
+    y_fit = slope * x_fit + intercept
+
+    # Compact intercept string
+    intercept_str = f"+ {intercept:.1f}" if intercept >= 0 else f"- {abs(intercept):.1f}"
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(3, 2.5), facecolor="none")
+
+    ax.plot(x_fit, y_fit, color="midnightblue", linewidth=1.5)
+    ax.scatter(
+        x,
+        y,
+        facecolors="white",
+        edgecolors="midnightblue",
+        s=50,
+        linewidth=1.5,
+    )
+
+    ax.set_xlabel("Hammett $\\sigma$")
+    ax.set_ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]")
+    ax.set_xticks(np.arange(-0.5, 1.1, 0.5))
+    ax.set_yticks(np.arange(-2, 1.1, 1))
+    ax.set_ylim(-2.5, 1.2)
+    ax.grid(False)
+    fig.patch.set_alpha(0.0)
+
+    # Regression equation and R^2
+    slope_str = f"{slope:+.1f}".replace("-", "−")
+    intercept_str = f"{intercept:+.1f}".replace("-", "−")
+
+    text_eq = (
+        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope_str}$\sigma$ {intercept_str}"
+        + "\n"
+        + rf"$R^2$ = {r_value**2:.2f}"
+    )
+    ax.text(
+        0.95,
+        0.95,
+        text_eq,
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment="top",
+        horizontalalignment="right",
+        color="midnightblue",
+    )
+    # ax.set_box_aspect(1)
+    # ax.set_aspect("equal", adjustable="box")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=500)
+    plt.close(fig)
+
+
+def angleplot(x, y, save_path: str) -> None:
+    """Plot ΔΔG‡expt. vs carbonyl angle and save the regression plot.
+
+    Parameters
+    ----------
+    x : array-like
+        Carbonyl angles in degrees.
+    y : array-like
+        Experimental ΔΔG‡ values [kcal/mol] corresponding to `x`.
+    save_path : str
+        Output image file path.
+
+    Returns
+    -------
+    None
+        The function saves the plot to `save_path`.
+    """
+    # Ensure output folder exists (e.g., "folder/file.png")
+    out_path = Path(save_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Linear regression
+    slope, intercept, r_value, p_value, std_err = linregress(x, y)
+
+    # Regression line
+    x_fit = np.linspace(np.nanmin(x), np.nanmax(x), 100)
+    y_fit = slope * x_fit + intercept
+
+    # Compact intercept string
+    intercept_str = f"+ {intercept:.1f}" if intercept >= 0 else f"- {abs(intercept):.1f}"
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(3, 2.5), facecolor="none")
+    ax.plot(x_fit, y_fit, color="saddlebrown", linewidth=1.5)
+    ax.scatter(
+        x,
+        y,
+        facecolors="white",
+        edgecolors="saddlebrown",
+        s=50,
+        linewidth=1.5,
+    )
+
+    ax.set_xlabel(r"carbonyl angle $\theta$ [°]")
+    ax.set_ylabel(r"$\Delta\Delta G^{\ddagger}_{\mathrm{expt.}}$ [kcal/mol]")
+    ax.set_xticks(np.arange(100, 131, 10))
+    ax.set_yticks(np.arange(-2, 1.1, 1))
+    ax.set_ylim(-2, 1.7)
+    ax.grid(False)
+    fig.patch.set_alpha(0.0)
+
+    # Regression equation and R^2
+    slope_str = f"{slope:.3f}".replace("-", "−")
+    intercept_str = f"{intercept:.1f}".replace("-", "−")
+
+    text_eq = (
+        rf"$\Delta\Delta G^{{\ddagger}}_{{\mathrm{{expt.}}}}$ = {slope_str}$\sigma$ {intercept_str}"
+        + "\n"
+        + rf"$R^2$ = {r_value**2:.2f}"
+    )
+    ax.text(
+        0.05,
+        0.95,
+        text_eq,
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment="top",
+        horizontalalignment="left",
+        color="saddlebrown",
+    )
+    # ax.set_box_aspect(1)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=500)
+    plt.close(fig)
+
+
+def main() -> None:
+    """Run the full data-processing and plotting workflow.
+
+    Steps
+    -----
+    1. Load and preprocess the original Excel data.
+    2. Export a cleaned Excel file with unique molecules.
+    3. Generate the ΔΔG vs k2/k1 analogue plot.
+    4. Generate Hammett and carbonyl-angle correlation plots.
+    """
+    # 1. Load data
+    df = common("data/Details_of_experimental_results.xlsx")
+
+    # 2. Cleaned unique-molecule table
+    output(df, "data/data.xlsx")
+
+    # 3. ΔΔG vs k2/k1 overview plot
+    plot_ddg_vs_k2k1(df, "data/legacy/eda/deltaG_k2k1.png")
+    plot_ddg_vs_k2k1_errorbar(df, "data/legacy/eda/deltaG_k2k1_errorbar.png")
+
+    # 4. Hammett plot from original Excel with and without error bars
+    eda.plot_hammett_from_excel(
+        "data/Details_of_experimental_results.xlsx",
+        "data/legacy/eda/hammett.png",
+    )
+    eda.plot_hammett_errorbar_from_excel(
+        "data/Details_of_experimental_results.xlsx",
+        "data/legacy/eda/hammett_errorbar.png",
+    )
+
+    # 4'. Carbonyl-angle plot from original Excel with and without error bars
+    eda.plot_carbonyl_angle_from_excel(
+        "data/Details_of_experimental_results.xlsx",
+        "data/legacy/eda/carbonyl angle.png",
+    )
+    eda.plot_carbonyl_angle_errorbar_from_excel(
+        "data/Details_of_experimental_results.xlsx",
+        "data/legacy/eda/carbonyl angle_errorbar.png",
+    )
+
+
+if __name__ == "__main__":
+    main()

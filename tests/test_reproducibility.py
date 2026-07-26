@@ -45,7 +45,7 @@ class ReproducibilityTests(unittest.TestCase):
         """Require the documented portable matrix dimensions."""
         result = verify_portable_inputs(ROOT, self.expected)
         self.assertEqual(result["training_rows"], 83)
-        self.assertEqual(result["combined_rows"], 191)
+        self.assertEqual(result["combined_rows"], 161)
         self.assertEqual(result["features"], 321)
 
     def test_saved_summary_and_outer_metrics(self) -> None:

@@ -67,16 +67,10 @@ fort.*
 !/data/current_model/inputs/**/*.json
 !/data/current_model/inputs/**/*.md
 
-# Only the two reviewed external series are frozen inputs. New-series caches
-# remain ignored under data/validation until --promote-inputs is deliberately
-# used together with a model-specification and manifest update.
-/data/current_model/inputs/external_diketones/*/
-!/data/current_model/inputs/external_diketones/x_series/
-!/data/current_model/inputs/external_diketones/y_series/
-!/data/current_model/inputs/external_diketones/x_series/*.csv
-!/data/current_model/inputs/external_diketones/x_series/*.npz
-!/data/current_model/inputs/external_diketones/y_series/*.csv
-!/data/current_model/inputs/external_diketones/y_series/*.npz
+# New-series validation caches remain outside the accepted input package.
+# Withdrawn x/y inputs and the last result snapshot are retained separately
+# under data/archive/xy_diketones for provenance only.
+/data/current_model/inputs/external_diketones/
 
 # Validation: retain only the final accepted current-model PNG figures.
 # Contribution cubes, viewer launchers/manifests, and external-diketone caches
@@ -85,6 +79,19 @@ fort.*
 !/data/validation/current_model/
 /data/validation/current_model/*
 !/data/validation/current_model/*.png
+!/data/validation/current_model/README.md
+!/data/validation/current_model/model/
+/data/validation/current_model/model/*
+!/data/validation/current_model/model/*.png
+!/data/validation/current_model/diketones/
+/data/validation/current_model/diketones/*
+!/data/validation/current_model/diketones/*.png
+!/data/validation/current_model/contribution_series/
+/data/validation/current_model/contribution_series/*
+!/data/validation/current_model/contribution_series/*.png
+!/data/validation/current_model/comparators/
+/data/validation/current_model/comparators/*
+!/data/validation/current_model/comparators/*.png
 !/data/validation/current_model/spatial_analysis/
 /data/validation/current_model/spatial_analysis/*
 !/data/validation/current_model/spatial_analysis/*.png
@@ -103,9 +110,7 @@ fort.*
 /data/Dataset prediction evaluation and prediction results.zip
 
 # Superseded exploratory/generated analyses.
-/data/eda/
-/data/test/
-/data/test.zip
+/data/legacy/
 /definition_grid.ipynb
 
 # Working archives and non-code publication material are SSD-only.
@@ -114,3 +119,4 @@ fort.*
 /reports/
 /reference/
 /memo/
+/scripts/publication/

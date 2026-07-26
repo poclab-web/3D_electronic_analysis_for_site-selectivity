@@ -15,7 +15,7 @@
     "ΔΔG.expt.",
     "test"
   ],
-  "row_count": 167,
+  "row_count": 161,
   "grid_count_per_block": {
     "electronic": 4927,
     "electrostatic": 4927,
@@ -55,5 +55,20 @@
       ]
     ],
     "identity_alignment": "InChIKey"
+  },
+  "workbook_refresh": {
+    "review_date": "2026-07-26",
+    "source": "data/Details_of_experimental_results.xlsx",
+    "identity_join": "InChIKey",
+    "removed_nontraining_count": 6,
+    "removed_nontraining_inchikeys": [
+      "QQXLDOJGLXJCSE-UTGAQZLRSA-N",
+      "QQXLDOJGLXJCSE-FWGGZQILSA-N",
+      "LVSQXDHWDCMMRJ-UHFFFAOYSA-N",
+      "WRQNANDWMGAFTP-UHFFFAOYSA-N",
+      "ZWVHTXAYIKBMEE-UHFFFAOYSA-N",
+      "GTDQGKWDWVUKTI-UHFFFAOYSA-N"
+    ],
+    "training_identity_or_response_changes": 0
   }
 }

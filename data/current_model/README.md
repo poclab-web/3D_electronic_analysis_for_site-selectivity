@@ -1,48 +1,73 @@
-# 採用 current model
+# Accepted-model data package
 
-このディレクトリは、論文で採用した current model の portable input、計算仕様、compact result をまとめた自己完結パッケージです。実行時に旧 `analysis_runs/`、legacy pickle、Gaussian archive を参照しません。
+This directory is the self-contained data and reference-result package for the
+model reported in the accompanying manuscript. Canonical reproduction does not
+read historical `analysis_runs/`, legacy pickle files, or the external Gaussian
+archive.
 
-## 再現の流れ
+## Reproduction contract
 
-1. `inputs/input_manifest.csv` により凍結入力の byte 数と SHA-256 を検証する。
-2. 167件の凍結 metadata・三記述子 block を読み、x/y diketone 24経路を prediction matrix のみに追加する。
-3. 凍結した83学習点について、全83 fold の strict nested outer-LOOCV を再計算する。
-4. full-training model、diketone 予測、compact table、確定 PNG を再生成する。
-5. `scripts/verify_reproduction.py` で保存結果を基準値と照合する。
+1. Verify every immutable input against `inputs/input_manifest.csv`.
+2. Load 161 frozen molecular rows and three aligned descriptor blocks.
+3. Refit all 83 strict nested outer leave-one-out models.
+4. Regenerate the full-training predictions, a--f diketone evaluation, compact
+   result tables, and reference figures.
+5. Compare the outputs with `expected_metrics.json` by running
+   `scripts/verify_reproduction.py`.
 
-各 outer fold では holdout を除外したデータだけから raw-grid scale、空間 grid、summary-feature scale、Lasso alpha を決定します。完全再現時に `--skip-nested` は使用しません。
+Within each outer fold, the holdout is excluded from raw-grid scaling, spatial
+selection, summary-feature scaling, and Lasso-alpha selection. A complete
+reproduction must not use `--skip-nested`.
 
-## ディレクトリ構成
+## Directory structure
 
-- `inputs/`: portable array、metadata、83学習点、x/y 外部入力、provenance、checksum manifest
-- `descriptor_coordinate_alignment_audit.csv`: electrostatic grid の欠損1座標を electronic grid に合わせてゼロ埋めした移行時 audit
-- このディレクトリ直下: 予測、係数、nested-LOOCV 指標、diketone 評価、計算仕様
-- `comparators/`: 採用モデルとの比較に必要な小容量 summary
-- `spatial_analysis/`: 係数・空間寄与の compact table と NPZ
-- `../validation/current_model/`: 確定 PNG
-- `libs/current_model_support/`: 新しい外部分子の descriptor を生成するときに使用する helper
+- `inputs/`: immutable descriptor arrays, molecular metadata, training
+  identities, provenance, and SHA-256 manifest.
+- `results/model/`: nested-LOOCV predictions, full-training fit, coefficients,
+  excluded-substrate predictions, and primary summary metrics.
+- `results/diketones/`: full-training and outer-model diketone predictions,
+  identity checks, semiquantitative evaluation, and uncertainty summaries.
+- `results/publication_tables/`: compact derived tables used to construct
+  manuscript and Supporting Information figures.
+- `audits/`: descriptor-coordinate alignment and active-workbook refresh
+  records. These document data transformations but are not model features.
+- `comparators/`: reviewed, compact summaries of prespecified comparator
+  models.
+- `spatial_analysis/`: feature-level coefficients, realized effects, spatial
+  summaries, and compressed matrices.
+- `../validation/current_model/`: reference figures grouped by analysis type.
 
-## モデル仕様と期待値
+`model_specification.json` records the complete computational specification;
+`expected_metrics.json` records numerical invariants and comparison tolerances.
 
-- training observations: 83
-- descriptor blocks: electronic、electrostatic、projected C=O π* orbital
-- raw coordinates: 4,927 / block
-- selected grids: 105 / block
-- features: 321（各 block の105 grid + max/min）
-- estimator: Lasso
-- alpha candidates: 1、0.1、0.01、0.001
-- full-training selected alpha: 0.01
-- strict nested outer-LOOCV R²: 0.8037754478337535
-- strict nested outer-LOOCV RMSE: 0.5811724454040451 kcal/mol
-- strict nested outer-LOOCV MAE: 0.43514599510153823 kcal/mol
-- diketone evaluation: a–f と外部 x/y。g は評価対象外
-- a–f/x/y semiquantitative RMSE: 13.047103174052545 percentage points（18 quantities）
+## Accepted model
 
-x/y は予測対象としてのみ追加され、学習、fold 内 scaling、特徴選択、alpha 選択には入りません。機械可読な基準値と許容差は `expected_metrics.json`、完全な仕様は `model_specification.json` にあります。
+| Item | Specification |
+| --- | --- |
+| Training observations | 83 |
+| Frozen metadata rows | 161 |
+| Prediction rows | 161 |
+| Descriptor blocks | electronic, electrostatic, projected C=O pi-star |
+| Full-grid coordinates | 4,927 per block |
+| Selected coordinates | 105 per block |
+| Features | 321: `(105 + max + min) x 3` |
+| Estimator | Lasso |
+| Alpha candidates | 1, 0.1, 0.01, 0.001 |
+| Full-training alpha | 0.01 |
+| Validation | strict nested outer LOOCV |
+| Nested outer R2 | 0.8037754478337535 |
+| Nested outer RMSE | 0.5811724454040451 kcal/mol |
+| Nested outer MAE | 0.43514599510153823 kcal/mol |
+| Diketone evaluation | a-f |
+| Semiquantitative RMSE | 13.122564725906527 percentage points |
 
-## 正式な再現コマンド
+The withdrawn x/y series and series g are not part of the reported evaluation.
+The 2026-07-26 workbook refresh removed six non-training monoketone records;
+the 83 training identities and experimental responses were unchanged.
 
-リポジトリのルートで実行します。
+## Canonical commands
+
+Run from the repository root:
 
 ```bash
 python libs/current_model.py --verify-inputs-only
@@ -63,44 +88,42 @@ python libs/analyze_current_model_spatial_contributions.py \
 python scripts/verify_reproduction.py
 ```
 
-`--no-excel-refresh` は、この package 内の凍結 metadata と response をそのまま使う canonical reproduction です。これを省略すると、`data/Details_of_experimental_results.xlsx` から InChIKey でラベルと実験値をメモリ上で再同期し、差分 audit を出力します。凍結 input 自体は書き換えません。
+`--no-excel-refresh` uses the versioned metadata and responses exactly as
+stored. Without it, current workbook labels and responses are joined in memory
+by InChIKey and the differences are written to `audits/`; the immutable input
+package is never modified.
 
-`--skip-contribution-cubes` は optional な498個の表示用 cube の生成だけを省略します。nested LOOCV と Git 対象の compact result / final PNG には影響しません。
+`--skip-contribution-cubes` omits only optional display cubes. Nested LOOCV,
+predictions, compact tables, and versioned figures are unaffected.
 
-寄与 cube 用の shell / AppleScript viewer helper は任意の macOS + GaussView 補助機能であり、モデル再計算や確定図の生成には不要です。
+## Principal outputs
 
-## 主な出力
+- `results/model/summary.csv`: primary model and validation metrics.
+- `results/model/outer_predictions.csv`: all 83 strict outer predictions.
+- `results/model/fulltrain_inner_alpha_path.csv`: full-training inner-LOOCV
+  alpha comparison.
+- `results/model/nonzero_coefficients.csv`: nonzero full-training terms.
+- `results/model/fulltrain_predictions_and_contributions.csv`: fitted values
+  and block contributions.
+- `results/diketones/diketone_predictions_by_outer_model.csv`: diketone
+  predictions from every outer model.
+- `results/diketones/diketone_semiquant_detail.csv`: experimental comparison
+  for a-f.
+- `results/diketones/diketone_primary8_outer83_68_interval.csv`: outer-model
+  uncertainty summary.
+- `results/model_comparison_current_vs_orbital_free.csv`: accepted/comparator
+  model table.
 
-- `summary.csv`: 採用モデルの主要指標
-- `outer_predictions.csv`: 83 fold の strict nested outer prediction
-- `fulltrain_inner_alpha_path.csv`: full-training inner-LOOCV alpha path
-- `nonzero_coefficients.csv`: 非ゼロ係数
-- `fulltrain_predictions_and_contributions.csv`: fitted value と block 寄与
-- `diketone_predictions_by_outer_model.csv`: 各 outer model の diketone 予測
-- `diketone_semiquant_detail.csv`: a–f/x/y の実験値との照合
-- `diketone_primary8_xy_outer83_68_interval.csv`: outer-model uncertainty
-- `model_comparison_current_vs_orbital_free.csv`: comparator table
-- `model_specification.json`: 凍結計算仕様
-- `expected_metrics.json`: verify が用いる期待値と許容差
+## Updating the package
 
-## Gaussian と新規 descriptor
+Gaussian-derived descriptors for new molecules must be generated outside the
+repository. Only reviewed portable NPZ, CSV, or JSON inputs may be promoted
+into `inputs/`. Every promotion requires an updated input manifest, explicit
+provenance, an updated model specification where applicable, and a complete
+reproduction check. Gaussian outputs and temporary caches remain excluded by
+the repository data policy.
 
-上記の再現では Gaussian は不要です。Gaussian、`formchk`、`cubegen`、Multiwfn が必要なのは、新しい分子・系列に対する記述子を作る場合だけです。大容量計算ファイルはリポジトリ外に置き、外部保存領域を `MOLECULES_ROOT` に設定したうえで、CLI に明示します。標準コマンド名を使わない場合は `FORMCHK_EXECUTABLE`、`CUBEGEN_EXECUTABLE`、`MULTIWFN_EXECUTABLE` を設定します。
-
-```bash
-export MOLECULES_ROOT="<external-storage>/molecules"
-SERIES=z
-
-python libs/predict_external_diketone.py \
-  --series "$SERIES" \
-  --run-quantum \
-  --molecule-root "${MOLECULES_ROOT}/${SERIES}_series"
-```
-
-未採用系列は Git 対象外の validation cache に出力されます。凍結入力への書込みはレビュー済み x/y 系列に `--promote-inputs` を明示した場合だけ許可し、その後に checksum manifest と model specification を再検証します。
-
-Gaussian artefact や一時 cache は Git 対象外です。採用する descriptor を portable NPZ/CSV/JSON に変換してから、manifest の byte 数と SHA-256 を更新してください。
-
-## Legacy
-
-旧 three-field model、過去の benchmark、探索 run は比較検討資料であり、本 package の runtime dependency ではありません。保管区分は `docs/DATA_POLICY.md` に従います。
+The historical Multiwfn version was not recorded. The checksummed frozen
+descriptor package is therefore the canonical source for the reported
+results. New calculations must record the Gaussian and Multiwfn versions in
+their run manifest.

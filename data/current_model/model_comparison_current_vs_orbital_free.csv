@@ -1,3 +1,0 @@
-model,feature_n,nested_outer_r2,nested_outer_rmse_kcal_mol,diketone_top_checks,diketone_check_n,diketone_semiquant_rmse_percent,diketone_evaluation_series
-Projected C=O pi*,321,0.8037754478337534,0.5811724454040453,8,8,13.122564725906527,a-f (matched comparator scope)
-Orbital-free EE/ES,214,0.8299705072560598,0.5409915374061086,8,8,15.061635952719229,a-f (matched comparator scope)

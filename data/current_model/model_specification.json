@@ -6,6 +6,8 @@
     "electrostatic",
     "orbital"
   ],
+  "metadata_rows": 161,
+  "training_rows": 83,
   "orbital_definition": "normalize(sum_i <psi_i|pi*_C=O>/(epsilon_i-epsilon_HOMO) psi_i), then square",
   "precut_full_grid_n_per_block": 4927,
   "electrostatic_coordinate_alignment": "electronic coordinate order",
@@ -50,19 +52,13 @@
   "alpha_selection": "minimum inner LOOCV RMSE",
   "nested_validation": "strict outer LOOCV; held-out row excluded from all scaling and selection",
   "diketone_used_for_model_selection": false,
-  "external_diketone_series": [
-    "x",
-    "y"
-  ],
   "diketone_evaluation_series": [
     "a",
     "b",
     "c",
     "d",
     "e",
-    "f",
-    "x",
-    "y"
+    "f"
   ],
   "input_arrays": "data/current_model/inputs/model_arrays.npz",
   "input_metadata": "data/current_model/inputs/model_metadata.csv",

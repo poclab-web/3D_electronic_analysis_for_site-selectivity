@@ -1,0 +1,15 @@
+{
+  "excel": "data/Details_of_experimental_results.xlsx",
+  "old_bundle_n": 167,
+  "refreshed_bundle_n": 161,
+  "training_n": 83,
+  "removed_nontraining_n": 6,
+  "changed_metadata_n": 0,
+  "new_external_rows_n": 0,
+  "new_external_unique_molecules_n": 0,
+  "feature_blocks": [
+    "electronic",
+    "electrostatic",
+    "orbital"
+  ]
+}
