@@ -491,6 +491,10 @@ def plot_yy(
     regression: pd.DataFrame,
     external: pd.DataFrame,
     path: Path,
+    *,
+    show_external: bool = True,
+    show_legend: bool = True,
+    transparent: bool = False,
 ) -> None:
     """Plot full-fit, nested-LOOCV, and excluded-substrate predictions."""
     values = np.r_[
@@ -523,7 +527,7 @@ def plot_yy(
         zorder=4,
         label=f"Nested LOOCV (N={len(outer)})",
     )
-    if not external.empty:
+    if show_external and not external.empty:
         ax.scatter(
             external[TARGET], external["prediction"], color="#c53d3d",
             marker="X", s=58, edgecolor="black", linewidth=0.45, zorder=5,
@@ -550,10 +554,11 @@ def plot_yy(
         va="top",
         fontsize=11.5,
     )
-    ax.legend(frameon=False, fontsize=9.2, loc="lower right")
+    if show_legend:
+        ax.legend(frameon=False, fontsize=9.2, loc="lower right")
     ax.grid(False)
     fig.tight_layout()
-    fig.savefig(path, dpi=500)
+    fig.savefig(path, dpi=500, transparent=transparent)
     plt.close(fig)
 
 
@@ -998,6 +1003,15 @@ def main() -> None:
         regression,
         external,
         MODEL_FIGURE_DIR / "yy_nested_outer_and_excluded.png",
+    )
+    plot_yy(
+        outer,
+        regression,
+        external,
+        MODEL_FIGURE_DIR / "yy_nested_outer_graphical_abstract.png",
+        show_external=False,
+        show_legend=False,
+        transparent=True,
     )
     # Regenerate the report-ready contribution distribution in the normal
     # current-model run, rather than requiring a separate spatial-analysis run.
