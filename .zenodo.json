@@ -1,0 +1,45 @@
+{
+  "creators": [
+    {
+      "name": "Sakaguchi, Daimon",
+      "affiliation": "Department of Chemistry and Life Science, Yokohama National University"
+    },
+    {
+      "name": "Kawasaki, Taisei",
+      "affiliation": "Department of Chemistry and Life Science, Yokohama National University"
+    },
+    {
+      "name": "Itakura, Mayu",
+      "affiliation": "Department of Chemistry and Life Science, Yokohama National University"
+    },
+    {
+      "name": "Tada, Chihiro",
+      "affiliation": "Department of Chemistry and Life Science, Yokohama National University"
+    },
+    {
+      "name": "Gotoh, Hiroaki",
+      "affiliation": "Department of Chemistry and Life Science, Yokohama National University"
+    }
+  ],
+  "title": "Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in Ketone Reductions: Code and Data",
+  "version": "v1.1.0",
+  "description": "Code, processed competition and model datasets, frozen descriptor inputs, fitted parameters, prediction outputs, and verification tools accompanying the revised JACS Au submission.",
+  "access_right": "open",
+  "keywords": [
+    "competition experiments",
+    "ketone reduction",
+    "quantitative structure-selectivity relationships",
+    "kinetics",
+    "site selectivity",
+    "stereoselectivity",
+    "machine learning"
+  ],
+  "license": "mit",
+  "upload_type": "software",
+  "language": "eng",
+  "communities": [
+    {
+      "identifier": "poclab"
+    }
+  ]
+}
