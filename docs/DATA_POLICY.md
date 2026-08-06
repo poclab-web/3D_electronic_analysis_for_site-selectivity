@@ -11,6 +11,9 @@ The following materials belong in the public repository:
 - Python source, environment specification, tests, and reproduction guidance.
 - The experimental source workbook,
   `data/Details_of_experimental_results.xlsx`.
+- The compact submitted transition-state coordinate and energy workbook under
+  `data/transition_states/`. This supports the quantum-chemical mechanistic
+  analysis and is not an input to the accepted machine-learning model.
 - Portable immutable inputs under `data/current_model/inputs/`, limited to
   NPZ, CSV, JSON, and Markdown files. Pickle is not an accepted runtime format.
 - Compact accepted-model results under `data/current_model/results/`, including
@@ -58,7 +61,8 @@ numerical verification must be updated in the same reviewed change.
 The following materials require controlled external storage:
 
 - production Gaussian inputs, outputs, and scratch data other than the minimal
-  examples in `examples/gaussian/`;
+  examples in `examples/gaussian/` and the compact submitted transition-state
+  coordinate and energy workbook under `data/transition_states/`;
 - superseded large tables, pickle files, historical models, and exploratory
   runs;
 - editable manuscript, Supporting Information, response-to-reviewers, and

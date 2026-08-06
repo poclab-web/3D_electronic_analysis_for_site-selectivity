@@ -2,6 +2,7 @@
 
 ![Python 3.10](https://img.shields.io/badge/Python-3.10-blue?logo=python)
 ![License: MIT](https://img.shields.io/badge/License-MIT-orange)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20060463.svg)](https://doi.org/10.5281/zenodo.20060463)
 
 This repository accompanies the manuscript *Kinetics-Based Framework for
 Predicting Site- and Facial-Selectivity in Ketone Reductions*. It provides the
@@ -13,6 +14,10 @@ The canonical reproduction entry point is `libs/current_model.py`. The frozen
 package in `data/current_model/inputs/` is the authoritative computational
 input. Historical model-search code is retained separately in `libs/legacy/`
 and does not define any reported result.
+
+The compact transition-state coordinate and energy workbook under
+`data/transition_states/` supports the quantum-chemical mechanistic analysis.
+It is not an input to the machine-learning model.
 
 ## Scientific scope
 
@@ -46,6 +51,7 @@ data/
     audits/                              Input-alignment and workbook audits
     comparators/                         Reviewed comparator summaries
     spatial_analysis/                    Spatial coefficients and effects
+  transition_states/                     TS coordinates and energies; not ML input
   validation/current_model/              Reference figures by analysis type
 libs/
   current_model.py                       Canonical model runner

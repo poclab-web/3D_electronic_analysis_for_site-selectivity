@@ -23,7 +23,7 @@
   ],
   "title": "Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in Ketone Reductions: Code and Data",
   "version": "v1.1.0",
-  "description": "Code, processed competition and model datasets, frozen descriptor inputs, fitted parameters, prediction outputs, and verification tools accompanying the revised JACS Au submission.",
+  "description": "Code, processed competition and model datasets, frozen descriptor inputs, fitted parameters, prediction outputs, transition-state coordinates and energies, and verification tools accompanying the manuscript \"Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in Ketone Reductions.\"",
   "access_right": "open",
   "keywords": [
     "competition experiments",
