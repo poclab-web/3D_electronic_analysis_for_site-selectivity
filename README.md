@@ -8,7 +8,7 @@ This repository accompanies the manuscript *Competition-Derived Relative
 Reactivity and 3D Electronic-State Analysis of Site- and Facial Selectivity in
 NaBH4/MeOH Ketone Reductions*. It provides the
 code, immutable descriptor inputs, reference predictions, and validation
-artifacts required to reproduce the accepted three-dimensional electronic
+artifacts required to reproduce the reported three-dimensional electronic
 model without rerunning the underlying quantum-chemical calculations.
 
 The canonical reproduction entry point is `libs/current_model.py`. The frozen
@@ -22,7 +22,7 @@ It is not an input to the machine-learning model.
 
 ## Scientific scope
 
-The accepted model combines three aligned spatial descriptor blocks:
+The reported model combines three aligned spatial descriptor blocks:
 
 - electronic density;
 - electrostatic potential; and
@@ -37,7 +37,7 @@ the held-out observation is excluded from scaling, spatial selection, and
 alpha selection.
 
 The reported diketone evaluation covers series a--f. No external prediction
-series is appended to the accepted-model matrix.
+series is appended to the model matrix used in the reported analysis.
 
 ## Repository contents
 
@@ -59,7 +59,7 @@ libs/
   analyze_current_model_spatial_contributions.py
   export_current_model_contribution_cubes.py
   diketone_metrics.py
-  current_model_support/                 Accepted-model support modules
+  current_model_support/                 Current-model support modules
   legacy/                                Superseded and withdrawn workflows
 scripts/
   verify_reproduction.py                 Independent repository verification
@@ -171,7 +171,7 @@ and is not an active supported command. Its frozen inputs and last result
 snapshot are documented under `data/archive/xy_diketones/`.
 
 The historical Multiwfn version used to create the frozen descriptors was not
-recorded; the checksummed accepted inputs therefore constitute the canonical
+recorded; the checksummed frozen inputs therefore constitute the canonical
 source for the reported model.
 
 ## Legacy code
@@ -183,8 +183,9 @@ outputs are written below the ignored `data/legacy/` directory.
 ## Citation
 
 Daimon Sakaguchi, Taisei Kawasaki, Mayu Itakura, Chihiro Tada, and Hiroaki
-Gotoh, *Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in
-Ketone Reductions* (submitted, 2026).
+Gotoh, *Competition-Derived Relative Reactivity and 3D Electronic-State
+Analysis of Site- and Facial Selectivity in NaBH4/MeOH Ketone Reductions*
+(submitted, 2026).
 
 ## License
 
