@@ -21,9 +21,9 @@
       "affiliation": "Department of Chemistry and Life Science, Yokohama National University"
     }
   ],
-  "title": "Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in Ketone Reductions: Code and Data",
+  "title": "Competition-Derived Relative Reactivity and 3D Electronic-State Analysis of Site- and Facial Selectivity in NaBH4/MeOH Ketone Reductions: Code and Data",
   "version": "v1.1.0",
-  "description": "Code, processed competition and model datasets, frozen descriptor inputs, fitted parameters, prediction outputs, transition-state coordinates and energies, and verification tools accompanying the manuscript \"Kinetics-Based Framework for Predicting Site- and Facial-Selectivity in Ketone Reductions.\"",
+  "description": "Code, processed competition and model datasets, frozen descriptor inputs, fitted parameters, prediction outputs, transition-state coordinates and energies, and verification tools accompanying the manuscript \"Competition-Derived Relative Reactivity and 3D Electronic-State Analysis of Site- and Facial Selectivity in NaBH4/MeOH Ketone Reductions.\"",
   "access_right": "open",
   "keywords": [
     "competition experiments",

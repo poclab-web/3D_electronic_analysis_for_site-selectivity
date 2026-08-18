@@ -4,8 +4,9 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-orange)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20060463.svg)](https://doi.org/10.5281/zenodo.20060463)
 
-This repository accompanies the manuscript *Kinetics-Based Framework for
-Predicting Site- and Facial-Selectivity in Ketone Reductions*. It provides the
+This repository accompanies the manuscript *Competition-Derived Relative
+Reactivity and 3D Electronic-State Analysis of Site- and Facial Selectivity in
+NaBH4/MeOH Ketone Reductions*. It provides the
 code, immutable descriptor inputs, reference predictions, and validation
 artifacts required to reproduce the accepted three-dimensional electronic
 model without rerunning the underlying quantum-chemical calculations.
