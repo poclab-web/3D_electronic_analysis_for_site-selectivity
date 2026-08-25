@@ -63,6 +63,7 @@ libs/
   legacy/                                Superseded and withdrawn workflows
 scripts/
   verify_reproduction.py                 Independent repository verification
+  validation/                            Structural-class validation workflows
   maintenance/                           One-time data-maintenance utilities
   viewers/                               Optional GaussView helpers
 tests/
@@ -137,6 +138,30 @@ The verifier rebuilds the portable 161-by-321 feature matrix, recalculates
 metrics from all 83 outer predictions, and
 validates the spatial coefficient and effect matrices. `run_pipeline.ipynb`
 provides a small notebook interface to the same command-line workflow.
+
+### 5. Reproduce structural-class validation
+
+The stricter internal transfer analysis with complete A--E structural-class
+holdouts is implemented in `scripts/validation/`. First generate the finalized
+Lasso holdout results, then compare all five regression methods under the same
+nested split:
+
+```bash
+python scripts/validation/leave_one_structural_class_out.py \
+  --repository-root . \
+  --output-dir /path/to/structural_class_holdout_validation
+
+python scripts/validation/nested_structural_class_method_comparison.py \
+  --repository-root . \
+  --output-dir /path/to/figure_S13_validation \
+  --lasso-reference \
+  /path/to/structural_class_holdout_validation/outer_predictions.csv
+```
+
+In both analyses, feature construction, scaling, and hyperparameter selection
+use only the outer-training observations. The second command verifies that its
+Lasso predictions exactly match the finalized Lasso procedure used for Figure
+S13B and Table S13.
 
 ## Reference results
 
